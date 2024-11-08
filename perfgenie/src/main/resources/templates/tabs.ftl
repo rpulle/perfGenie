@@ -9,8 +9,10 @@
     function addTabNote(toggle, msg){
         if(toggle){
             if($( "#view-info" ).css("display") === "none"){
-                $( "#view-info-text" ).html(msg);
-                $( "#view-info" ).toggle( "slide", { direction: "right" }, 500 );
+                if(msg !== "") {
+                    $("#view-info-text").html(msg);
+                    $("#view-info").toggle("slide", {direction: "right"}, 500);
+                }
             }
         }else{
             if($( "#view-info-text" ).html("") != "") {
@@ -53,7 +55,7 @@
         <#include "surface.ftl">
     </div>
     <div id="tsview">
-        <#include "tsview.ftl">
+        <#include "tsview-new.ftl">
     </div>
 </div>
 <div id="modals-guid" class="col-lg-12">

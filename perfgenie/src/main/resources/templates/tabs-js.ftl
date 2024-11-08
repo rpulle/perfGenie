@@ -40,14 +40,8 @@
         $("#event-type-sample").val(event_type);
         $("#event-type-flame").val(event_type);
         $("#event-type").val(event_type);
-        updateUrl("filterEvent",filterEvent,true);
+        updateUrl("filterEvent", filterEvent, true);
         setNote(filterEvent);
-        /*if(note != ""){
-            $('#cct-note').text(note);
-            $('#cct-note').show();
-        }else{
-            $('#cct-note').hide();
-        }*/
         applyFilter();
     }
 
@@ -55,16 +49,22 @@
         $( "#tabs" ).tabs({
             activate: function (event, ui) {
                 if(ui.newPanel.attr("id") == "cct"){
+                    updateTabUrl("#cct");
                     updateProfilerViewCCT(prevSelectedLevel,true);
                 }else if(ui.newPanel.attr("id") == "flame"){
+                    updateTabUrl("#flame");
                     updateProfilerViewFlame(prevSelectedLevel,true);
                 }else if(ui.newPanel.attr("id") == "samples"){
+                    updateTabUrl("#samples");
                     updateProfilerViewSample(prevSelectedLevel,true);
                 }else if(ui.newPanel.attr("id") == "tsview"){
+                    updateTabUrl("#tsview");
                     updateProfilerViewTsview(prevSelectedLevel,true);
                 }else if(ui.newPanel.attr("id") == "river"){
+                    updateTabUrl("#river");
                     updateProfilerViewRiver(prevSelectedLevel,true);
                 }else if(ui.newPanel.attr("id") == "surface"){
+                    updateTabUrl("#surface");
                     updateProfilerViewSurface(prevSelectedLevel,true);
                 }
             }
@@ -95,64 +95,98 @@
         $("#event-type-surface").empty();
         $("#event-type-river").empty();
         $("#event-type-tsview").empty();
-        for (var key in jfrprofiles1) {
+
+        let isSFProfile = false;
+        for (var key in jfrprofiles1) {//sfdc
+            if(key.includes("jfr_dump")){
+                isSFProfile = true;
+                break;
+            }
+        }
+
+        let order = [];//put method profile on top
+        if(jfrprofiles1["jfr_dump.json.gz"]){
+            order.push("jfr_dump.json.gz");
+        }
+        for (let key in jfrprofiles1) {
+            if(key !==  "jfr_dump.json.gz"){
+                order.push(key);
+            }
+        }
+        for (let i = 0; i< order.length; i++) {
+            let key = order[i];
+            let profileName = getProfileName(key);
             if(filterEvent == key) {
                 $('#event-type').append($('<option>', {
                     value: key,
-                    text: key,
+                    text: profileName,
                     selected: true
                 }));
                 $('#event-type-flame').append($('<option>', {
                     value: key,
-                    text: key,
+                    text: profileName,
                     selected: true
                 }));
                 $('#event-type-sample').append($('<option>', {
                     value: key,
-                    text: key,
+                    text: profileName,
                     selected: true
                 }));
                 $('#event-type-river').append($('<option>', {
                     value: key,
-                    text: key,
+                    text: profileName,
                     selected: true
                 }));
                 $('#event-type-surface').append($('<option>', {
                     value: key,
-                    text: key,
+                    text: profileName,
                     selected: true
                 }));
                 $('#event-type-tsview').append($('<option>', {
                     value: key,
-                    text: key,
+                    text: profileName,
                     selected: true
                 }));
             }else{
                 $('#event-type').append($('<option>', {
                     value: key,
-                    text: key
+                    text: profileName
                 }));
                 $('#event-type-flame').append($('<option>', {
                     value: key,
-                    text: key
+                    text: profileName
                 }));
                 $('#event-type-sample').append($('<option>', {
                     value: key,
-                    text: key
+                    text: profileName
                 }));
                 $('#event-type-river').append($('<option>', {
                     value: key,
-                    text: key
+                    text: profileName
                 }));
                 $('#event-type-surface').append($('<option>', {
                     value: key,
-                    text: key
+                    text: profileName
                 }));
                 $('#event-type-tsview').append($('<option>', {
                     value: key,
-                    text: key
+                    text: profileName
                 }));
             }
+        }
+
+        if(sampletableFormat == 1 || sampletableFormat == 0) {
+            $('#event-type-sample').append($('<option>', {
+                value: "All",
+                text: "All"
+            }));
+        }
+
+        if(tsviewtableFormat != undefined && tsviewtableFormat == 1) {
+            $('#event-type-tsview').append($('<option>', {
+                value: "All",
+                text: "All"
+            }));
         }
 
         validateInputAndcreateContextTree(true);
@@ -250,34 +284,57 @@
 
         if(isValidReq && getEventType() != undefined) {
             createContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, true);
+        }else{
+            console.log("Warn: Event type undefined.")
         }
     }
 
-    function createJFRCallTree(count) {
-        if (count == 1) {
-            if (getContextTree(1).context !== undefined && getContextTree(1).context !== null) {
+    function createJFRCallTree(length, eventType) {
+        if (length == 1) {
+            if (getContextTree(1, eventType).context !== undefined && getContextTree(1, eventType).context !== null) {
                 isJfrContext = true;
-            } else {
-                const defaultResult = {error_messages: [], total: 0, roots: []};
-                setmergedContextTree(mergeTrees(invertTree(getContextTree(1)), defaultResult));
             }
         } else {
-            if (getContextTree(1).context !== undefined && getContextTree(1).context !== null && getContextTree(2).context !== undefined && getContextTree(2).context !== null) {
+            if (getContextTree(1, eventType).context !== undefined && getContextTree(1, eventType).context !== null && getContextTree(2, eventType).context !== undefined && getContextTree(2, eventType).context !== null) {
                 isJfrContext = true;
-                setmergedContextTree(mergeTreesV1(invertTreeV1(getContextTree(1), 1), invertTreeV1(getContextTree(2), 2), 1));
-            } else {
-                setmergedContextTree(mergeTrees(invertTree(getContextTree(1)), invertTree(getContextTree(2))));
+                setmergedContextTree(mergeTreesV1(invertTreeV1(getContextTree(1, eventType), 1), invertTreeV1(getContextTree(2, eventType), 2), 1));
             }
         }
+    }
+
+    function getProfileName(profile, interval){
+        if(profile === "jfr_dump.json.gz"){
+            return "Java (Thread State(s): Runnable, Sampling Frequency: 10 ms)";
+        }else if(profile === "jfr_dump_socket.json.gz"){
+            return "Java (Thread State(s): Socket R/W, Threshold: 200 ms)";
+        }else if(profile === "jfr_dump_apex.json.gz"){
+            return "Apex (Thread State(s): All, Sampling Frequency: 2 s)";
+        }else if(profile === "jfr_dump_memory.json.gz"){
+            return "Java Memory (Sampling after every: xxm)";
+        }else if(profile === "Jstack" || profile === "json-jstack"){
+            if(interval != undefined) {
+                return "Java (Thread State(s): All, Sampling Frequency: " + interval + " s)";
+            }else{
+                return "Java (Thread State(s): All, Sampling Frequency: x s)";
+            }
+        }
+        return profile;
     }
 
     function createContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry) {
         let start = performance.now();
-        if (isCalltree == true && getmergedContextTree() === undefined && getContextTree(1) !== undefined) {
+        let eventType = getEventType();
+
+        if(getContextTree(1, eventType) !== undefined){//data already fetched, try updateProfilerView
+            updateProfilerView();
+            console.log("createContextTree skip data fetch");
+            return;
+        }
+        /*if (isCalltree == true && getmergedContextTree() === undefined && getContextTree(1, eventType) !== undefined) {
             // this will happen when backtrace view  is loaded and requesting a call tree view
             resetTreeHeader("Inverting tree ...");
             spinnerToggle('spinnerId');
-            createJFRCallTree(profiles.length); //generate call tree from back trace
+            createJFRCallTree(profiles.length, eventType); //generate call tree from back trace
 
             //apply filter and display tree
             updateProfilerView();
@@ -285,22 +342,48 @@
             let end = performance.now();
             console.log("createContextTree time:" + (end - start));
             return;
-        }
+        }*/
+
+
         //data not available, retrieve and create context tree
-        retrievAndcreateContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, getEventType());
+
+        if(eventType.includes("jfr_dump")) {
+            retrievAndcreateContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, eventType);
+        }else{
+            retrievAndcreateContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, getEventType());
+        }
         let end = performance.now();
         console.log("createContextTree time:" + (end - start));
+    }
+
+    function getLogContextWrapper(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType, contextTrees, customEvent){
+        let customEventCount = 0;
+        for (var customEvent in jfrevents1) {
+            getLogContext(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType, contextTrees, customEvent);
+            customEventCount++;
+            break;
+        }
+        if(customEventCount == 0){
+            getLogContext(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType, contextTrees, "jfr-context");
+        }
     }
 
     function retrievAndcreateContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, eventType) {
         let start = performance.now();
         if(getEventType() === eventType) {
-            resetTreeHeader("Retrieving tree data ...");
+            resetTreeHeader("<div style='padding-right: 10px'>Retrieving profile data ... <span style='float: right;' class='spinner' id='profilespinner'></span></div>");
+            showSpinner('profilespinner');
+        }
+        let isJstackEvent = false;
+        if(eventType == "Jstack" || eventType == "json-jstack"){
+            isJstackEvent=true;
         }
         const queryResults = fetchData(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, eventType);
         if (queryResults === undefined) {
             let end = performance.now();
             console.log("retrievAndcreateContextTree 0 time:" + (end - start) + " event:" + eventType);
+            resetTreeHeader("<div style='padding-right: 10px'>Failed to retrieve profile data of "+eventType+"<span style='float: right;' class='spinner' id='profilespinner'></span></div>");
+            hideSpinner('profilespinner');
             return;
         }
         spinnerToggle('spinnerId');
@@ -323,7 +406,7 @@
                         toastr_error("Failed to process profile: " + contextTree["error"]);
                     }
                     isError = true;
-                }else if(eventType == "Jstack"){
+                }else if(isJstackEvent){
                     if(contextTree.meta != undefined && contextTree.meta['jstack-interval'] != undefined){
                         let jstackinterval = contextTree.meta['jstack-interval'];
                         $("#event-type option[value='jstack']").html("Java (Thread State(s): All, Sampling Frequency: "+jstackinterval+" s)");
@@ -346,6 +429,8 @@
                     console.log("retrievAndcreateContextTree 1 time:" + (end - start) + " event:" + eventType);
                 }
                 spinnerToggle('spinnerId');
+                hideSpinner('profilespinner');
+                resetTreeHeader("<div style='padding-right: 10px'>Failed to retrieve profile data of "+eventType+"<span style='float: right;' class='spinner' id='profilespinner'></span></div>");
                 return;
             }
 
@@ -360,163 +445,79 @@
                 if (contextTrees[0].context !== undefined && contextTrees[0].context !== null) {
                     //$("#framefilterId").removeClass("hide");
                     isJfrContext = true;
-                    const defaultResult = {error_messages: [], sz: 0, ch: []};
-                    if (eventType === "Jstack") {
-                        console.log("add frames1:" + eventType);
-                        if(contextTree1Frames === undefined){
-                            contextTree1JstackFrames = true;
-                            contextTree1Frames = contextTrees[0].context.frames;
-                            contextTree1Frames[3506402] = "root";
-                        }else{
-                            for (var key in contextTrees[0].context.frames) {
-                                if(contextTree1Frames[key] === undefined){
-                                    contextTree1Frames[key]=contextTrees[0].context.frames[key];
-                                }
-                            }
-                        }
-                    }else{
-                        if(contextTree1JstackFrames === true){
-                            console.log("add frames1:" + eventType);
-                            contextTree1JstackFrames=false;
-                            for (var key in contextTrees[0].context.frames) {
-                                if(contextTree1Frames[key] === undefined){
-                                    contextTree1Frames[key]=contextTrees[0].context.frames[key];
-                                }
-                            }
-                        }else if(contextTree1Frames === undefined){
-                            console.log("add frames1:" + eventType);
-                            contextTree1Frames = contextTrees[0].context.frames;
-                            contextTree1Frames[3506402] = "root";
-                        }
-                    }
+                    //const defaultResult = {error_messages: [], sz: 0, ch: []};
+                    setContextTreeFrames(contextTrees[0].context.frames, 1, eventType);
 
                     if (isCalltree) {
                         setContextTree(contextTrees[0], 1, eventType);
-                        setContextTreeInverted(invertTreeV1(contextTrees[0], 1), 1, eventType);
+                        //setContextTreeInverted(invertTreeV1(contextTrees[0], 1), 1, eventType);
                     } else {
                         setContextTree(contextTrees[0], 1, eventType);
                     }
                     contextTrees[0].context.start = Math.round(contextTrees[0].context.start / 1000000);
                     contextTrees[0].context.end = Math.round(contextTrees[0].context.end / 1000000);
-                    if (getEventType() == eventType) {
+                    if ( (getEventType() == eventType)){//} && !(eventType == "json-jstack" && eventType.contains("dump_"))) || eventType == "jfr_dump.json.gz") { //todo check this, dirty fix for sfdc
                         if(uploads[0] == "true" && fileIds[0] != "") {
-                            setContextData({"records": {}, "tidlist": [], "header": {}});
+                            setContextData({"records": {}, "tidlist": [], "header": {}},1);
                         }else{
-                            getLogContext(dateRanges[0], pods[0], queries[0], profilers[0], tenants[0], profiles[0], hosts[0], uploads[0], fileIds[0], uploadTimes[0], aggregates[0], eventType, contextTrees[0].context.start, contextTrees[0].context.end);
+                            getLogContextWrapper(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType, contextTrees, customEvent);
                         }
                         for (var type in jfrprofiles1) {
-                            if(type != eventType) {
+                            if(type != eventType){//} && eventType != "jfr_dump.json.gz") {
                                 retrievAndcreateContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, type);
                             }
                         }
-                    }
-                } else {
-                    $("#framefilterId").addClass("hide");
-                    const defaultResult = {error_messages: [], size: 0, children: []};
-                    if (isCalltree) {
-                        setmergedContextTree(mergeTrees(invertTree(contextTrees[0]), defaultResult), eventType);
-                    } else {
-                        setContextTree(contextTrees[0], 1, eventType);//cache to generate backtrave view
-                        setmergedBacktraceTree(mergeTrees(contextTrees[0], defaultResult), eventType);
                     }
                 }
             } else {
                 $("#framefilterId").addClass("hide");
                 if (contextTrees[0].context !== undefined && contextTrees[1].context !== undefined && contextTrees[0].context !== null && contextTrees[1].context !== null) {
                     isJfrContext = true;
-                    if (eventType === "Jstack") {
-                        console.log("add frames1:" + eventType);
-                        if(contextTree1Frames === undefined){
-                            contextTree1JstackFrames = true;
-                            contextTree1Frames = contextTrees[0].context.frames;
-                            contextTree1Frames[3506402] = "root";
-                        }else{
-                            for (var key in contextTrees[0].context.frames) {
-                                if(contextTree1Frames[key] === undefined){
-                                    contextTree1Frames[key]=contextTrees[0].context.frames[key];
-                                }
-                            }
-                        }
-                    }else{
-                        if(contextTree1JstackFrames === true){
-                            console.log("add frames1:" + eventType);
-                            contextTree1JstackFrames=false;
-                            for (var key in contextTrees[0].context.frames) {
-                                if(contextTree1Frames[key] === undefined){
-                                    contextTree1Frames[key]=contextTrees[0].context.frames[key];
-                                }
-                            }
-                        }else if(contextTree1Frames === undefined){
-                            console.log("add frames1:" + eventType);
-                            contextTree1Frames = contextTrees[0].context.frames;
-                            contextTree1Frames[3506402] = "root";
-                        }
-                    }
 
-                    if (eventType === "Jstack") {
-                        console.log("add frames2:" + eventType);
-                        if(contextTree2Frames === undefined){
-                            contextTree2JstackFrames = true;
-                            contextTree2Frames = contextTrees[1].context.frames;
-                            contextTree2Frames[3506402] = "root";
-                        }else{
-                            for (var key in contextTrees[1].context.frames) {
-                                if(contextTree2Frames[key] === undefined){
-                                    contextTree2Frames[key]=contextTrees[1].context.frames[key];
-                                }
-                            }
-                        }
-                    }else{
-                        if(contextTree2JstackFrames === true){
-                            console.log("add frames2:" + eventType);
-                            contextTree2JstackFrames=false;
-                            for (var key in contextTrees[1].context.frames) {
-                                if(contextTree2Frames[key] === undefined){
-                                    contextTree2Frames[key]=contextTrees[1].context.frames[key];
-                                }
-                            }
-                        }else if(contextTree2Frames === undefined){
-                            console.log("add frames1:" + eventType);
-                            contextTree2Frames = contextTrees[1].context.frames;
-                            contextTree2Frames[3506402] = "root";
-                        }
-                    }
+                    setContextTreeFrames(contextTrees[0].context.frames, 1, eventType);
+                    setContextTreeFrames(contextTrees[1].context.frames, 2, eventType);
 
                     if (isCalltree) {
-                        setmergedContextTree(mergeTreesV1(invertTreeV1(contextTrees[0], 1), invertTreeV1(contextTrees[1], 2), 1), eventType);
+                        setContextTree(contextTrees[0], 1, eventType);
+                        setContextTree(contextTrees[1], 2, eventType);
+                        //setmergedContextTree(mergeTreesV1(invertTreeV1(contextTrees[0], 1), invertTreeV1(contextTrees[1], 2), 1), eventType);
                     } else {
                         setContextTree(contextTrees[0], 1, eventType);
                         setContextTree(contextTrees[1], 2, eventType);
-                        setmergedBacktraceTree(mergeTreesV1(contextTrees[0], contextTrees[1], 1), eventType);
+                        //setmergedBacktraceTree(mergeTreesV1(contextTrees[0], contextTrees[1], 1), eventType);
                     }
-                    console.log("Skipping context data for compare tree");
-                    updateFilterViewStatus("Note: Context filter is disabled when compare option selected.");
+                    contextTrees[0].context.start = Math.round(contextTrees[0].context.start / 1000000);
+                    contextTrees[0].context.end = Math.round(contextTrees[0].context.end / 1000000);
+                    contextTrees[1].context.start = Math.round(contextTrees[1].context.start / 1000000);
+                    contextTrees[1].context.end = Math.round(contextTrees[1].context.end / 1000000);
 
-                    unhideFilterViewStatus();
+                    //console.log("Skipping context data for compare tree");
+                    //updateFilterViewStatus("Note: Context filter is disabled when compare option selected.");
+                    //unhideFilterViewStatus();
+
                     $("#cct-panel").css("height","100%");
 
-                    if (eventType == getEventType()) {
+                    if ( (getEventType() == eventType)){//} && !(eventType == "json-jstack" && eventType.contains("dump_"))) || eventType == "jfr_dump.json.gz") { //todo check this, dirty fix for sfdc
+
+                        getLogContextWrapper(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType, contextTrees, customEvent);
+
                         for (var type in jfrprofiles1) {
-                            if(type != eventType) {
+                            if(type != eventType){//} && eventType != "jfr_dump.json.gz") {
                                 retrievAndcreateContextTree(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, type);
                             }
                         }
                     }
-                } else {
-                    if (isCalltree) {
-                        setmergedContextTree(mergeTrees(invertTree(contextTrees[0]), invertTree(contextTrees[1])), eventType);
-                    } else {
-                        setContextTree(contextTrees[0], 1, eventType);//cache to generate backtrave view
-                        setContextTree(contextTrees[1], 2, eventType);//cache to generate backtrave view
-                        setmergedBacktraceTree(mergeTrees(contextTrees[0], contextTrees[1]), eventType);
-                    }
                 }
-
             }
             if (!isJfrContext) {
                 updateProfilerView();
-            } else if (getEventType() == eventType) {
-                updateProfilerView();
+            } else if (getEventType() == eventType) {//if SF profile, we need to wait for jfr_dump.json.gz event
+                if(eventType.includes("jfr_dump") || eventType.includes("json-jstack")){
+                    //console.log("waiting for jfr_dump.json.gz ...");
+                    incrementTimer = setInterval(waitAndupdateProfilerView, 1000);
+                }else {
+                    updateProfilerView();
+                }
             }
             spinnerToggle('spinnerId');
         }).catch(error => {
@@ -535,10 +536,178 @@
         console.log("retrievAndcreateContextTree 5 time:" + (end - start) + " event:" + eventType);
     }
 
-    function getLogContext(timeRange, pod, query, profiler, tenant, profile, host, upload, fileId, uploadTime, aggregate, eventType, start, end) {
+    function fetchOtherEvents(timeRange, tenant, host, count){
+        for (var key in otherEvents1) {
+            getOtherEvent(timeRange, tenant, host, key, count);
+        }
+    }
+
+    let incrementRefreshTimer = undefined;
+    let updateProfilerViewLock = false;
+    let waitForEventCount = 0;
+    let waitForEventMax = 600;
+    function waitAndrefreshTree(count) {
+        if(waitForEventCount > waitForEventMax){
+            clearInterval(incrementRefreshTimer);
+            console.log("waitAndrefreshTree timeout");
+        }else {
+            if ( (profile1 != undefined  && profile1 != "Jstacks") && (updateProfilerViewLock  || getContextTree(1, "jfr_dump.json.gz") === undefined)) {
+                if(waitForEventCount == 0){
+                    console.log("waitAndrefreshTree ... ");
+                }
+                waitForEventCount++;
+            } else {
+                updateProfilerViewLock = true;
+                clearInterval(incrementRefreshTimer);
+                refreshTree();
+                updateProfilerViewLock = false;
+            }
+        }
+    }
+
+    let incrementTimer = undefined;
+    function waitAndupdateProfilerView() {
+        if(waitForEventCount > waitForEventMax){
+            clearInterval(incrementTimer);
+            console.log("waitAndupdateProfilerView timeout");
+        }else {
+            if ((profile1 != undefined  && profile1 != "Jstacks") && (updateProfilerViewLock  ||  getContextTree(1, "jfr_dump.json.gz") === undefined)) {
+                if(waitForEventCount == 0){
+                    console.log("waitAndupdateProfilerView ... ");
+                }
+                waitForEventCount++;
+            } else {
+                updateProfilerViewLock = true;
+                clearInterval(incrementTimer);
+                updateProfilerView();
+                updateProfilerViewLock = false;
+            }
+        }
+    }
+
+    function fetchContextData(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType){
+        const requests = [];
+        let datacenters = [];
+        for (let i = 0; i < tenants.length; i++) {
+            if (tenants[i].includes(".")) {
+                datacenters[i] = tenants[i].split(".")[0].trim();
+                tenants[i] = tenants[i].split(".")[1].trim();
+            }else {
+                datacenters[i] = tenants[i];
+            }
+        }
+        let toTenant = "";
+        if (uploads[0] != "true" && isS3 == "false") {
+            toTenant = datacenters[0];
+        }
+        const callTreeUrl = getCallTreeUrl(dateRanges[0], pods[0], queries[0], profilers[0], tenants[0], profiles[0], hosts[0], uploads[0], fileIds[0], uploadTimes[0], aggregates[0], eventType);
+        requests.push(callTreePerfGenieAjax(toTenant, "GET", callTreeUrl, result => result));
+        if (profiles.length === 2) {
+            let toTenant = "";
+            if (uploads[1] != "true") {
+                toTenant = datacenters[1];
+            }
+            const callTreeUrl = getCallTreeUrl(dateRanges[1], pods[1], (queries.length === 2) ? queries[1] : '', (profilers.length === 2) ? profilers[1] : '', (tenants.length === 2) ? tenants[1] : '', (profiles.length === 2) ? profiles[1] : '', (hosts.length === 2) ? hosts[1] : '', (uploads.length === 2) ? uploads[1] : '', (fileIds.length === 2) ? fileIds[1] : '', (uploadTimes.length === 2) ? uploadTimes[1] : '', aggregates[1], eventType);
+            requests.push(callTreePerfGenieAjax(toTenant, "GET", callTreeUrl, result => result));
+        }
+        return Promise.all(requests);
+    }
+
+
+    function getLogContext(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, eventType, contextTrees, customEvent) {
+        let start = performance.now();
+
         unhideFilterViewStatus();
-        updateFilterViewStatus("Note: Retrieving request context from jfr, this may take few sec  ...");
-        const callTreeUrl = getCallTreeUrl(timeRange, pod, query, profiler, tenant, profile, host, upload, fileId, uploadTime, aggregate, "customEvent");
+        updateFilterViewStatus("<div style='padding-right: 0px'>Retrieving request context of profile, this may take few sec  ... <span style='float: right;' class='spinner' id='contextspinner'></span></div>");
+        showSpinner('contextspinner');
+
+        let queryResults = fetchContextData(dateRanges, pods, queries, profilers, tenants, profiles, hosts, uploads, fileIds, uploadTimes, aggregates, customEvent);
+        if (queryResults === undefined) {
+            let end = performance.now();
+            console.log("getLogContext 0 time:" + (end - start) + " event:" + customEvent);
+            return;
+        }
+        console.log("getLogContext done");
+
+        queryResults.then(contextDatas => {
+            let isError = false;
+            if (contextDatas.length === 1) {
+                if(contextDatas[0] === "") {
+                    console.log("log context not available in JFR");
+                    updateFilterViewStatus("Note: Failed to get Request context.");
+                    toastr_warning("Failed to get Request context.");
+                    setContextData({"records": {}, "tidlist": [], "header": {}},1);
+                    fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                    showContextFilter();
+                    hideFilterViewStatus();
+                    refreshTreeAfterContext(customEvent);
+                }else {
+                    if(contextDatas[0].tidlist == undefined && contextDatas[0].error != undefined){
+                        updateFilterViewStatus("Note: Failed to get Request context.");
+                        toastr_warning("Failed to get Request context.");
+                        setContextData({"records": {}, "tidlist": [], "header": {}},1);
+                        fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                        showContextFilter();
+                        hideFilterViewStatus();
+                        refreshTreeAfterContext(customEvent);
+                    }else {
+                        setContextData(contextDatas[0],1);
+                        fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                        //showContextFilter();
+                        //hideFilterViewStatus();
+                        refreshTreeAfterContext(customEvent);
+                    }
+                }
+            }else{
+                if(contextDatas[0] === "" || contextDatas[1] === "") {
+                    console.log("log context not available in JFR");
+                    updateFilterViewStatus("Note: Failed to get Request context.");
+                    toastr_warning("Failed to get Request context.");
+                    setContextData({"records": {}, "tidlist": [], "header": {}},1);
+                    setContextData({"records": {}, "tidlist": [], "header": {}},2);
+                    fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                    fetchOtherEvents(dateRanges[1], tenants[1], hosts[1], 2);
+                    showContextFilter();
+                    hideFilterViewStatus();
+                    refreshTreeAfterContext(customEvent);
+                }else {
+                    if(contextDatas[0].tidlist == undefined && contextDatas[0].error != undefined){
+                        updateFilterViewStatus("Note: Failed to get Request context.");
+                        toastr_warning("Failed to get Request context.");
+                        setContextData({"records": {}, "tidlist": [], "header": {}},2);
+                        fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                        fetchOtherEvents(dateRanges[1], tenants[1], hosts[1], 2);
+                        showContextFilter();
+                        hideFilterViewStatus();
+                        refreshTreeAfterContext(customEvent);
+                    }else {
+                        setContextData(contextDatas[0],1);
+                        setContextData(contextDatas[1],2);
+                        fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                        fetchOtherEvents(dateRanges[1], tenants[1], hosts[1], 2);
+                        //showContextFilter();
+                        //hideFilterViewStatus();
+                        refreshTreeAfterContext(customEvent);
+                    }
+                }
+            }
+
+            }).catch(error => {
+                setContextData({"records": {}, "tidlist": [], "header": {}},1);
+                fetchOtherEvents(dateRanges[0], tenants[0], hosts[0], 1);
+                updateFilterViewStatus("Note: Failed to get Request context.");
+                toastr_warning("Failed to get Request context.");
+                refreshTreeAfterContext(customEvent);
+                console.error(error);
+            });
+    }
+
+    function getLogContextold(timeRange, pod, query, profiler, tenant, profile, host, upload, fileId, uploadTime, aggregate, eventType, start, end, customEvent) {
+        unhideFilterViewStatus();
+        updateFilterViewStatus("<div style='padding-right: 0px'>Retrieving request context of profile, this may take few sec  ... <span style='float: right;' class='spinner' id='contextspinner'></span></div>");
+        showSpinner('contextspinner');
+
+        const callTreeUrl = getCallTreeUrl(timeRange, pod, query, profiler, tenant, profile, host, upload, fileId, uploadTime, aggregate, customEvent);
         let toTenant = tenant;
         if(isS3 == "true") {
             toTenant = "";
@@ -549,24 +718,129 @@
                 console.log("log context not available in JFR, will fetch from Splunk");
                 updateFilterViewStatus("Note: Failed to get Request context.");
                 toastr_warning("Failed to get Request context.");
-                setContextData({"records": {}, "tidlist": [], "header": {}});
+                setContextData({"records": {}, "tidlist": [], "header": {}},1);
+                fetchOtherEvents(timeRange, tenant, host);
+
+                showContextFilter();
+                hideFilterViewStatus();
+
+                refreshTreeAfterContext(customEvent);
             }else {
                 if(response.tidlist == undefined && response.error != undefined){
                     updateFilterViewStatus("Note: Failed to get Request context.");
                     toastr_warning("Failed to get Request context.");
-                    setContextData({"records": {}, "tidlist": [], "header": {}});
-                }else {
-                    setContextData(response);
+                    setContextData({"records": {}, "tidlist": [], "header": {}},1);
+                    fetchOtherEvents(timeRange, tenant, host);
+
                     showContextFilter();
                     hideFilterViewStatus();
-                    refreshTree();
+                    refreshTreeAfterContext(customEvent);
+                }else {
+                    setContextData(response,1);
+                    fetchOtherEvents(timeRange, tenant, host);
+
+                    showContextFilter();
+                    hideFilterViewStatus();
+
+                    refreshTreeAfterContext(customEvent);
                 }
             }
         }, function (error) {
-            setContextData({"records": {}, "tidlist": [], "header": {}});
+            if(error.status == 401){
+                location.reload();
+            }
+            setContextData({"records": {}, "tidlist": [], "header": {}},1);
+            fetchOtherEvents(timeRange, tenant, host);
             updateFilterViewStatus("Note: Failed to get Request context.");
             toastr_warning("Failed to get Request context.");
             console.error(error);
+        });
+    }
+
+    function refreshTreeAfterContext(customEvent){
+        //if sfdc, we need to wait for jfr_dump.json.gz
+        if(customEvent.includes("jfr_dump")){
+            //console.log("waiting for jfr_dump.json.gz ...");
+            incrementRefreshTimer = setInterval(waitAndrefreshTree, 1000);
+        }else {
+            refreshTree();
+        }
+    }
+
+    function setOtherEventData(data, count){
+        let localContextData = getContextData(count);
+        if(localContextData.records != undefined && data.records != undefined){
+
+            for (var customevent in data.records) {
+                if(customevent == "monitor-context"){
+                    let note = "";
+                    let contextDataRecords = data.records[customevent];
+
+                    for (var tid in contextDataRecords) {
+                        contextDataRecords[tid].forEach(function (obj) {
+                            let record = obj.record;
+                            if(record["8"] == "true"){
+                                note = note +  " tid:"+tid+"<a title='click to view lock details' style='cursor: pointer;' class='fa fa-eye' onclick='showLockDetail(" + record[0] + ", " + tid + ", \"" + count + "\")'></a>";
+                            }
+                        });
+                    }
+                    if(note != "") {
+                        $("#timeLineChartError").html("Deadlocks detected: " + note);
+                        $('#timeLineChartError').show();
+                    }
+                }
+                localContextData.records[customevent] = data.records[customevent];
+            }
+        }
+        if(localContextData.header != undefined && data.header != undefined){
+            for (var customevent in data.header) {
+                otherEventsFetched[customevent]=true;
+                localContextData.header[customevent] = data.header[customevent];
+                $('#other-event-input').append($('<option>', {
+                    value: customevent,
+                    text: customevent
+                }));
+                //if no options exist then reload the table to show this other event. URL sharing may not work when there are many other events
+                if($('#other-event-input')[0].children.length == 1){
+                    genRequestTable();
+                }
+                Toastify({
+                    text: customevent + " data loaded",
+                    duration: 8000
+                }).showToast();
+                $("#cct-panel").css("height", "100%");//expand context table view
+            }
+        }
+        console.log("setOtherEventData done count:" + count);
+    }
+    let otherEventsMaxAjaxTris = {};
+    function getOtherEvent(timeRange, tenant, host, customEvent, count) {
+        const callTreeUrl = getEventUrl(timeRange, tenant, host, customEvent);
+        if(otherEventsMaxAjaxTris[callTreeUrl] == undefined){
+            otherEventsMaxAjaxTris[callTreeUrl] = 1;
+        }else{
+            otherEventsMaxAjaxTris[callTreeUrl]++;
+        }
+        if(otherEventsMaxAjaxTris[callTreeUrl] > 1){
+            console.log("getOtherEvent already fetched count:" + count);
+            return;
+        }
+        let toTenant = tenant;
+        if(isS3 == "true") {
+            toTenant = "";
+        }
+        let request = stackDigVizAjax(toTenant, "GET", callTreeUrl, function (response) { // success function
+            console.log("getOtherEvent done count:" + count);
+            if(response == undefined || response === "" || response.header == undefined) {
+                console.log("Warn: unable to fetch other event" + customEvent);
+            }else {
+                setOtherEventData(response, count);
+            }
+        }, function (error) {
+            if(error.status == 401){
+                location.reload();
+            }
+            console.log("Warn: unable to fetch other event" + customEvent);
         });
     }
 
@@ -588,21 +862,31 @@
     //create html tree recursively
     function updateProfilerView(level) {
         if($("#tabs .ui-tabs-panel:visible").attr("id") == "flame"){
+            updateTabUrl("#flame");
             updateProfilerViewFlame(level);
         }else if($("#tabs .ui-tabs-panel:visible").attr("id") == "cct"){
+            updateTabUrl("#cct");
             updateProfilerViewCCT(level);
         }else if($("#tabs .ui-tabs-panel:visible").attr("id") == "samples"){
+            updateTabUrl("#samples");
             updateProfilerViewSample(level);
         }else if($("#tabs .ui-tabs-panel:visible").attr("id") == "tsview"){
+            updateTabUrl("#tsview");
             updateProfilerViewTsview(level);
         }else if($("#tabs .ui-tabs-panel:visible").attr("id") == "river"){
+            updateTabUrl("#river");
             updateProfilerViewRiver(level);
         }else if($("#tabs .ui-tabs-panel:visible").attr("id") == "surface"){
+            updateTabUrl("#surface");
             updateProfilerViewSurface(level);
         }
     }
 
+
+
     // [ajax request(s)] gets context tree data
+    let numberOfTries = {};
+    let maxAjaxRetries = 1;
     function fetchData(dateRanges, pods, queries, profilers, tenants, hosts, profiles, uploads, fileIds, uploadTimes, aggregates, retry, eventType) {
         const requests = [];
         let datacenters = [];
@@ -620,6 +904,18 @@
             toTenant = datacenters[0];
         }
         const callTreeUrl = getCallTreeUrl(dateRanges[0], pods[0], queries[0], profilers[0], tenants[0], profiles[0], hosts[0], uploads[0], fileIds[0], uploadTimes[0], aggregates[0], eventType);
+
+        if(numberOfTries[callTreeUrl] == undefined){
+            numberOfTries[callTreeUrl] = 1;
+        }else{
+            numberOfTries[callTreeUrl]++;
+        }
+
+        if(numberOfTries[callTreeUrl] > maxAjaxRetries){
+            console.log("fetchData reached max for this URL:" + callTreeUrl);
+            return undefined;
+        }
+
         if (retry) {
             requests.push(callTreePerfGenieAjax(toTenant, "GET", callTreeUrl, result => result));
         } else {
@@ -640,54 +936,87 @@
         return Promise.all(requests);
     }
 
+    function getDiagEventUrl(timestamp, tenant, host, guid, name){
+        let endpoint = "/v1/event/" + tenant + "/?start=" + timestamp + "&end=" + timestamp +
+            "&metadata_query=" + encodeURIComponent("host=" + host) +
+            "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+            "&metadata_query=" + encodeURIComponent("guid=" + guid) +
+            "&metadata_query=" + encodeURIComponent("name=" + name);
+        if(dataSource.includes("genie")){
+            endpoint += "&metadata_query=" + encodeURIComponent("source=" + dataSource);
+        }
+        return endpoint;
+    }
+
+    function getEventUrl(timeRange, tenant, host, customEvent){
+        let endpoint = "";
+        const start = parseInt(timeRange.split(" - ")[0]);
+        const end = parseInt(timeRange.split(" - ")[1]);
+        endpoint = "/v1/otherevents/" + tenant + "/?start=" + start + "&end=" + end +
+            "&metadata_query=" + encodeURIComponent("host=" + host) +
+            "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+            "&metadata_query=" + encodeURIComponent("name=" + customEvent);
+        if(dataSource.includes("genie")){
+            endpoint += "&metadata_query=" + encodeURIComponent("source=" + dataSource);
+        }
+        return endpoint;
+    }
+
     // the url to get calling context trees
     function getCallTreeUrl(timeRange, pod, query, profiler, tenant, profile, host, upload, fileId, uploadTime, aggregate, eventType) {
         // for debug console.log("getCallTreeUrl timeRange:" + timeRange + " pod:" + pod + " query:"+query + " profiler:" + profiler + " tenant:"+tenant + " profile:" + profile + " host:" + host + " upload:" + upload + " fileId:" + fileId + " uploadTime:" + uploadTime + " aggregate:" + aggregate)
         let endpoint = "";
         {
-            if (eventType == "Jstack") {
+            //for any type of profile selection jstacks are handled in the same way
+            if (eventType == "Jstack" || eventType == "json-jstack") {
                 const start = parseInt(timeRange.split(" - ")[0]);
                 const end = parseInt(timeRange.split(" - ")[1]);
-                endpoint = "/v1/jstack/" + tenant + "/?start=" + start + "&end=" + end +
+                endpoint = "/v1/jstacks/" + tenant + "/?start=" + start + "&end=" + end +
                     "&metadata_query=" + encodeURIComponent("host=" + host) +
-                    "&metadata_query=" + encodeURIComponent("tenant=" + tenant) +
-                    "&metadata_query=" + encodeURIComponent("name=Jstack");
-                return endpoint;
-            }
-            if (profile == "Jstacks") {
-                const start = parseInt(timeRange.split(" - ")[0]);
-                const end = parseInt(timeRange.split(" - ")[1]);
-                endpoint = "/v1/customevents/" + tenant + "/?start=" + start + "&end=" + end +
-                    "&metadata_query=" + encodeURIComponent("host=" + host) +
-                    "&metadata_query=" + encodeURIComponent("tenant=" + tenant) +
-                    "&metadata_query=" + encodeURIComponent("name=" + eventType);
+                    "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+                    "&metadata_query=" + encodeURIComponent("file-name=" + eventType);
+                if(dataSource.includes("genie")){
+                    endpoint += "&metadata_query=" + encodeURIComponent("source=" + dataSource);
+                }
                 return endpoint;
             }
 
-            if (profile !== "All") {
-                let array = profile.split(" - ");
-                const timestamp = array[0];
-                let guid = array[1];
-                endpoint = "/v1/profile/" + tenant + "/?start=" + timestamp + "&end=" + timestamp +
-                    "&metadata_query=" + encodeURIComponent("host=" + host) +
-                    "&metadata_query=" + encodeURIComponent("tenant=" + tenant) +
-                    "&metadata_query=" + encodeURIComponent("guid=" + guid) +
-                    "&metadata_query=" + encodeURIComponent("name=" + eventType);
-            } else {
+            if (profile === "All") {
                 const start = parseInt(timeRange.split(" - ")[0]);
                 const end = parseInt(timeRange.split(" - ")[1]);
-                if(eventType == "customEvent"){
+                if (eventType == "jfr-context" || eventType.includes("jfr_dump_log")) {
                     endpoint = "/v1/customevents/" + tenant + "/?start=" + start + "&end=" + end +
                         "&metadata_query=" + encodeURIComponent("host=" + host) +
-                        "&metadata_query=" + encodeURIComponent("tenant=" + tenant) +
-                        "&metadata_query=" + encodeURIComponent("name=customEvent");
-                }else {
+                        "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+                        "&metadata_query=" + encodeURIComponent("file-name=" + eventType);
+                } else {
                     endpoint = "/v1/profiles/" + tenant + "/?start=" + start + "&end=" + end +
                         "&metadata_query=" + encodeURIComponent("host=" + host) +
-                        "&metadata_query=" + encodeURIComponent("tenant=" + tenant) +
-                        "&metadata_query=" + encodeURIComponent("name=" + eventType);
+                        "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+                        "&metadata_query=" + encodeURIComponent("file-name=" + eventType);
                 }
+            } else if(profile === "Jstacks"){
+                const start = parseInt(timeRange.split(" - ")[0]);
+                const end = parseInt(timeRange.split(" - ")[1]);
+                if (eventType == "jfr-context" || eventType.includes("jfr_dump_log")) {
+                        endpoint = "/v1/customevents/" + tenant + "/?start=" + start + "&end=" + end +
+                            "&metadata_query=" + encodeURIComponent("host=" + host) +
+                            "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+                            "&metadata_query=" + encodeURIComponent("file-name=" + eventType);
+                }
+            }else{
+                let array = profile.split(" - ");
+                const timestamp = array[0];
+                let guid = eventType.includes("jfr_dump") ? array[1] + eventType : array[1];
+                endpoint = "/v1/profile/" + tenant + "/?start=" + timestamp + "&end=" + timestamp +
+                    "&metadata_query=" + encodeURIComponent("host=" + host) +
+                    "&metadata_query=" + encodeURIComponent("tenant-id=" + tenant) +
+                    "&metadata_query=" + encodeURIComponent("guid=" + guid) +
+                    "&metadata_query=" + encodeURIComponent("file-name=" + eventType);
             }
+        }
+        if(dataSource.includes("genie")){
+            endpoint += "&metadata_query=" + encodeURIComponent("source=" + dataSource);
         }
         return endpoint;
     }

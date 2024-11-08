@@ -7,11 +7,14 @@
 
 package perfgenie.utils;
 
-import com.google.common.collect.ImmutableSet;
 import org.openjdk.jmc.common.IMCFrame;
 import org.openjdk.jmc.common.IMCMethod;
 import org.openjdk.jmc.common.IMCStackTrace;
+import org.slf4j.LoggerFactory;
 
+
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -19,16 +22,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class EventHandler {
-    private static final Logger logger = Logger.getLogger(EventHandler.class.getName());
+    private static final org.slf4j.Logger  logger =  LoggerFactory.getLogger(EventHandler.class);
     private static final String ROOT = "root";
     private static final int WRAP_MESSAGE_HASH = "wrapped.single stack in profile".hashCode();
     private static final int FILTER_MESSAGE_HASH = "below threshold ...".hashCode();
-    private static final String patternString = "\"(.*)\" #(\\w+) .*\\n|.*java.lang.Thread.State: (\\w+).*\\n|at (.*)\\(.*\\n";
+    private static final String patternString = "at (.*)\\(.*\\n|.*- waiting to lock <(.*)>\\s+\\(a (.*)\\)\\n|.*- locked <(.*)>\\s+\\(a (.*)\\)\\n|\"(.*)\" #(\\w+) .*\\n|.*java.lang.Thread.State: (\\w+).*\\n|(JNI global references:).*|.*- waiting on the Class initialization monitor for (.*)"; //"\"(.*)\" #(\\w+) .*\\n|.*java.lang.Thread.State: (\\w+).*\\n|at (.*)\\(.*\\n";
     private static final Pattern pattern = Pattern.compile(patternString);
 
     private final Map<Integer, String> frames = new ConcurrentHashMap<>();
@@ -46,6 +48,8 @@ public class EventHandler {
     private Map<String, StackFrame> profiles = new ConcurrentHashMap<>();
     private Map<String, Long> eventCounts = new ConcurrentHashMap<>();
 
+    private Map<Integer, List<SFLogContext>> sfrecords = new ConcurrentHashMap();
+
     private int eventCount = 0;
     private double threshold = 0.01;
     private Long startEpoch = 0L;
@@ -59,6 +63,8 @@ public class EventHandler {
 
     private int maxStackDepth = 64;
 
+    private int exceptionCount = 0;
+
     private enum ThreadState {
         RUNNABLE,
         BLOCKED,
@@ -67,11 +73,70 @@ public class EventHandler {
         UNKNOWN
     }
 
-    public void processContext(List l, int tid, String type) {
-        if (!records.get(type).containsKey(tid)) {
-            records.get(type).put(tid, Collections.synchronizedList(new ArrayList<LogContext>()));
+    public void processMonitorLog(String logfile){
+        try (BufferedReader reader = new BufferedReader(new FileReader(logfile))) {
+            logger.info("processing file: " + logfile);
+            String line;
+
+            List<String> header = new ArrayList<>();
+
+            header.add("timestamp:timestamp");
+            header.add("tid:text");
+            header.add("CPU:number");
+            header.add("threadname:text");
+            initializeEvent("processcpu");
+            addHeader("processcpu", header);
+
+            // Read each line from the file
+            int span = 1;
+            while ((line = reader.readLine()) != null) {
+                // Split the line into parts using ":" as the separator
+                String[] parts = line.split(":");
+
+                if (parts.length >= 4) {
+                    if(span < 2) {
+                        List<Object> record = new ArrayList<>();
+                        record.add(Long.parseLong(parts[0])*1000);
+                        record.add(parts[1]);
+                        record.add(Double.parseDouble(parts[2]));
+                        if (parts[3].length() > 232) {
+                            if(parts[3].indexOf("jdk/") != -1){
+                                record.add(parts[3].substring(parts[3].indexOf("jdk/"), 200) + ".." + parts[3].substring(parts[3].length() - 30));
+                            }else {
+                                record.add(parts[3].substring(0, 200) + ".." + parts[3].substring(parts[3].length() - 30));
+                            }
+                        }else{
+                            if(parts[3].indexOf("jdk/") != -1){
+                                record.add(parts[3].substring(parts[3].indexOf("jdk/"), parts[3].length()));
+                            }else {
+                                record.add(parts[3]);
+                            }
+                        }
+                        processContext(record, Integer.parseInt(parts[1]), "processcpu");
+                    }
+                    //span++;
+                    if(span > 6){
+                        span = 1;
+                    }
+
+                } else {
+                    System.err.println("Invalid line format: " + line);
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading file: " + logfile + ":" + e.getMessage());
         }
-        records.get(type).get(tid).add(new LogContext(l));
+    }
+
+    public void processContext(List l, int tid, String type) {
+        try {
+            if (!records.get(type).containsKey(tid)) {
+                records.get(type).put(tid, Collections.synchronizedList(new ArrayList<LogContext>()));
+            }
+            records.get(type).get(tid).add(new LogContext(l));
+        }catch(Exception e){
+           e.printStackTrace();
+        }
     }
 
     private ThreadState getThreadState(final String state) {
@@ -177,34 +242,8 @@ public class EventHandler {
         } else {
             profiles.get(type).setSz(0);
         }
-        Map<String, String> meta = new HashMap<>();
-        try {
-            SurfaceDataResponse res = genSurfaceData(profiles.get(type), pidDatas.get(type));
-            meta.put("data", Utils.toJson(res));
-        } catch (Exception e) {
-            meta.put("exception", Utils.toJson(e));
-        }
 
-        for (final String event : header.keySet()) {
-            if (event.contains("CPUEvent")) {
-                List<Long> cpu = new ArrayList<>();
-                for (int i = 0; i < header.get(event).size(); i++) {
-                    if (header.get(event).get(i).equals("cpuPerc:number")) {
-                        for (final int tid : records.get(event).keySet()) {
-                            List l = records.get(event).get(tid);
-                            for (int k = 0; k < l.size(); k++) {
-                                cpu.add((Long) records.get(event).get(tid).get(k).record.get(i));
-                            }
-                        }
-                    }
-                }
-                //if(!meta.containsKey("cpuPerc")) {
-                meta.put("cpuPerc", Utils.toJson(cpu));
-                //break;
-                //}
-            }
-        }
-        return new JfrParserResponse(profiles.get(type), null, meta, new JfrContext(pidDatas.get(type), frames, startEpoch, endEpoch));
+        return new JfrParserResponse(profiles.get(type), null, null, new JfrContext(pidDatas.get(type), frames, startEpoch, endEpoch));
     }
 
     public Object getProfileTree(int filterDepth, String type, boolean experimental) {
@@ -236,7 +275,30 @@ public class EventHandler {
         Map<String, String> meta = new HashMap<>();
         try {
             if(experimental){
-                SurfaceDataResponse res = genSurfaceData(profiles.get(type), pidDatas.get(type));
+                try {
+                    SurfaceDataResponse res = genSurfaceData(profiles.get(type), pidDatas.get(type));
+                    //get CPU events if exists
+                    for (final String event : header.keySet()) {
+                        if (event.equals("CPUEvent")) {
+                            List<Long> cpu = res.getCpuSamplesList();
+                            for (int i = 0; i < header.get(event).size(); i++) {
+                                if (header.get(event).get(i).equals("cpuPerc:number")) {
+                                    for (final int tid : records.get(event).keySet()) {
+                                        List l = records.get(event).get(tid);
+                                        for (int k = 0; k < l.size(); k++) {
+                                            cpu.add((Long) records.get(event).get(tid).get(k).record.get(i));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    meta.put("data", Utils.toJson(res));
+                }catch(Exception e){
+                    meta.put("data", "{}");//Utils.toJson(res));
+                }
+
             }else {
                 meta.put("data", "{}");//Utils.toJson(res));
             }
@@ -244,30 +306,9 @@ public class EventHandler {
             meta.put("exception", Utils.toJson(e));
         }
 
-        for (final String event : header.keySet()) {
-            if (event.contains("CPUEvent")) {
-                List<Long> cpu = new ArrayList<>();
-                for (int i = 0; i < header.get(event).size(); i++) {
-                    if (header.get(event).get(i).equals("cpuPerc:number")) {
-                        for (final int tid : records.get(event).keySet()) {
-                            List l = records.get(event).get(tid);
-                            for (int k = 0; k < l.size(); k++) {
-                                cpu.add((Long) records.get(event).get(tid).get(k).record.get(i));
-                            }
-                        }
-                    }
-                }
-                //if(!meta.containsKey("cpuPerc")) {
-                meta.put("cpuPerc", Utils.toJson(cpu));
-                //break;
-                //}
-            }
-        }
-
         frames.put(FILTER_MESSAGE_HASH,"below parsing threshold ...");
         frames.put(WRAP_MESSAGE_HASH, "single stack in profile");
-
-        return new JfrParserResponse(profiles.get(type), null, null, new JfrContext(pidDatas.get(type), frames, startEpoch, endEpoch));
+        return new JfrParserResponse(profiles.get(type), null, meta, new JfrContext(pidDatas.get(type), frames, startEpoch, endEpoch));
     }
 
     private void sortProfile(final StackFrame p) {
@@ -352,10 +393,16 @@ public class EventHandler {
         String fullNm = null;
         try {
             fullNm = method.getType().getFullName();
+            if(fullNm == null){
+                fullNm = "unknown";
+            }
         } catch (StringIndexOutOfBoundsException e) {
             fullNm = "unknown";
         }
-        final String methodNm = method.getMethodName();
+        String methodNm = method.getMethodName();
+        if(methodNm == null){
+            methodNm = "unknown";
+        }
         int hash = CustomHash(fullNm.hashCode(), methodNm.hashCode());
         if (!frames.containsKey(hash)) {
             stringBuilder.setLength(0);
@@ -382,7 +429,107 @@ public class EventHandler {
         return hash;
     }
 
+    public class DeadlockDetector {
+        private final Map<String, List<String>> resourceGraph = new HashMap<>();
+        private final Set<String> visited = new HashSet<>();
+        private final Set<String> recursionStack = new HashSet<>();
+        private List<String> cycleNodes = new ArrayList<>();
+        private List<List<String>> deadlockCycles = new ArrayList<>();
+        private Set<String> currentCycleSet = new HashSet<>();
+
+        // Add a resource allocation
+        public void addResource(String threadId, String resourceId) {
+            resourceGraph.putIfAbsent(threadId, new ArrayList<>());
+            resourceGraph.get(threadId).add(resourceId);
+        }
+
+        // Add a resource request
+        public void addRequest(String threadId, String resourceId) {
+            resourceGraph.putIfAbsent(resourceId, new ArrayList<>());
+            resourceGraph.get(resourceId).add(threadId);
+        }
+
+        // Detect deadlocks and return all cycle nodes if found
+        public List<List<String>> findDeadlockCycles() {
+            String substrate = System.getenv("SUBSTRATE");
+            /*if(substrate != null) {//enable dead lock detection  in local
+                logger.info("dead lock detection disabled.");
+                return deadlockCycles; // Return all deadlock cycles
+            }*/
+            visited.clear();
+            recursionStack.clear();
+            deadlockCycles.clear();
+
+            for (String node : resourceGraph.keySet()) {
+                currentCycleSet.clear(); // Clear current cycle set for new DFS
+                cycleNodes.clear(); // Clear cycle nodes for new search
+
+                if (detectCycle(node)) {
+                    // Only add complete cycles to deadlockCycles
+                    deadlockCycles.add(new ArrayList<>(cycleNodes));
+                }
+            }
+            return deadlockCycles; // Return all deadlock cycles
+        }
+
+        // Helper method to detect cycles using DFS
+        private boolean detectCycle(String node) {
+            if (!visited.contains(node)) {
+                visited.add(node);
+                recursionStack.add(node);
+                currentCycleSet.add(node); // Track nodes in the current cycle
+                cycleNodes.add(node); // Add node to the cycle path
+
+                for (String neighbor : resourceGraph.getOrDefault(node, Collections.emptyList())) {
+                    if (!visited.contains(neighbor)) {
+                        if (detectCycle(neighbor)) {
+                            return true;
+                        }
+                    } else if (recursionStack.contains(neighbor) && currentCycleSet.contains(neighbor)) {
+                        // Cycle detected, include the cycle path up to the neighbor
+                        cycleNodes.add(neighbor); // Add neighbor to complete the cycle
+                        return true;
+                    }
+                }
+            }
+
+            recursionStack.remove(node);
+            currentCycleSet.remove(node); // Remove from current cycle tracking
+            if (cycleNodes.contains(node)) {
+                cycleNodes.remove(cycleNodes.size() - 1); // Remove node from cycle path on backtrack
+            }
+            return false;
+        }
+    }
+
+    private void checkClassLocks(HashSet<String> waits, DeadlockDetector detector, List<String> stacks, int tid, List<MonitorContext> locks, String tname, HashSet<String> classlocks) {
+        for (int i = 0; i < stacks.size(); i++) {
+            for (String ele : waits) {
+                if (stacks.get(i).contains(ele) && i != 0) {
+                    if (stacks.get(i - 1).contains("java.lang.reflect.Constructor.newInstance")) {
+                        //detector.addResource(Integer.toString(tid), ele);
+                        locks.add(new MonitorContext(tid,tname,ele,ele,i,stacks.get(i)));
+                        classlocks.add(ele);
+                    }
+                }
+            }
+        }
+    }
+
     public boolean processJstackEvent(long time, final String jstack) {
+        return processJstackEvent(time,jstack,true);
+    }
+
+    public static boolean isNumeric(String str) {
+        try {
+            Double.parseDouble(str);
+            return true;
+        } catch(NumberFormatException e){
+            return false;
+        }
+    }
+
+    public boolean processJstackEvent(long time, final String jstack, final boolean includeProfileEvents) {
         try {
             SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss zzz");
             Date date = df.parse(jstack.substring(0, jstack.indexOf("\n")) + " UTC");
@@ -393,7 +540,34 @@ public class EventHandler {
             }
         } catch (Exception e) {
             //first line must be a date
-            return false;
+            try {
+                //zing [Mon Jul 01 10:32:12 PM UTC 2024]
+                String zingDate = jstack.substring(jstack.indexOf("[")+1, jstack.indexOf("]"));
+                SimpleDateFormat df = new SimpleDateFormat("E MMM dd HH:mm:ss aa zzz yyyy");
+                Date date = df.parse(zingDate);
+                //take jstack timestamp if event time is too off ( more than 1 min)
+                long diff = Math.abs(time / 1000000 - date.getTime());
+                if (diff > 6000) {
+                    time = date.getTime() * 1000000;
+                }
+                System.out.println("Using E MMM dd HH:mm:ss aa zzz yyyy format timestamp ");
+            }catch (Exception ex){
+                try {
+                    //zing [Mon Jul 01 10:32:12 PM UTC 2024]
+                    String zingDate = jstack.substring(jstack.indexOf("[")+1, jstack.indexOf("]"));
+
+                    SimpleDateFormat df = new SimpleDateFormat("E MMM dd HH:mm:ss zzz yyyy");
+                    Date date = df.parse(zingDate);
+                    //take jstack timestamp if event time is too off ( more than 1 min)
+                    long diff = Math.abs(time / 1000000 - date.getTime());
+                    if (diff > 6000) {
+                        time = date.getTime() * 1000000;
+                    }
+                    System.out.println("Using E MMM dd HH:mm:ss zzz yyyy format timestamp ");
+                }catch (Exception exx){
+                    return false;
+                }
+            }
         }
 
         if (startEpoch == 0L || time < startEpoch) {
@@ -402,53 +576,305 @@ public class EventHandler {
         if (time > endEpoch) {
             setEndEpoch(time);
         }
+
+        DeadlockDetector detector = new DeadlockDetector();
+        HashSet<String> classwaits = new HashSet<>();
+        HashSet<String> classlocks = new HashSet<>();
+        final String patternString2 = ".*- waiting on the Class initialization monitor for (.*)|\"(.*)\" #(\\w+) .*\\n";
+        final Pattern pattern2 = Pattern.compile(patternString2);
+        final Matcher matcher2 = pattern2.matcher(jstack);
+        Integer tid = -1;
+        String tname = "";
+        List<MonitorContext> waits = new ArrayList<>();
+        List<MonitorContext> locks = new ArrayList<>();
+
+        while (matcher2.find()) {
+            if (matcher2.group(1) != null) {
+                classwaits.add(matcher2.group(1));
+                detector.addRequest(Integer.toString(tid),matcher2.group(1));
+            }else if (matcher2.group(3) != null) {
+                tid = Integer.parseInt(matcher2.group(3).toUpperCase());
+                tname = matcher2.group(2);
+            }
+        }
+
         final Matcher matcher = pattern.matcher(jstack);
         final List<String> stack = new ArrayList<>();
         int sampleCount = 0;
         int tstate = -1;
-        String tname = "";
-        int tid = 0;
+        tname = "";
+        tid = 0;
         final StringBuilder normalized = new StringBuilder();
 
+        final HashSet tmpLocks = new HashSet();
+        final HashSet tmpWaits = new HashSet();
+
+        //"at (.*)\\(.*\\n|.*- waiting to lock \<(.*))\>(.*)\\n|.*- locked \<(.*))\>(.*)\\n|\"(.*)\" #(\\w+) .*\\n|.*java.lang.Thread.State: (\\w+).*\\n";
+        // "Thread-1" #7661 prio=5 os_prio=0 tid=0x62001de00000 nid=0x161e  [ JVM thread_state=_thread_in_vm, locked by VM (w/poll advisory bit) acquiring VM lock 'java.util.concurrent.ConcurrentHashMap', polling bits: safep ]
+        //   java.lang.Thread.State: BLOCKED (on object monitor)
+        //- waiting to lock <0x0000080108a7c220> (a java.util.concurrent.ConcurrentHashMap)
+        //- locked <0x00000800cfa1f330> (a java.lang.Class)
+        // at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:216)
+
         while (matcher.find()) {
-            if (tid != -1 && matcher.group(4) != null) {
-                normalized.setLength(0);
-                Utils.normalizeFrame(matcher.group(4), normalized, 0);
-                stack.add(normalized.toString());
-            } else if (matcher.group(3) != null) {
+            //if (tid != -1 && matcher.group(4) != null) {
+            if (tid != -1 && matcher.group(1) != null) {
+                //if(includeProfileEvents) {
+                    normalized.setLength(0);
+                    Utils.normalizeFrame(matcher.group(1), normalized, 0);
+                    stack.add(normalized.toString());
+                //}
+            } else if (matcher.group(8) != null) {
                 if (stack.size() != 0 && tid != -1) {
                     sampleCount++;
                     //processEvent(tid, (int) ((time - startEpoch) / 1000000), tstate + ";" + tname, stack, "Jstack");
-                    processEvent(tid, time, tstate + ";" + tname, stack, "Jstack");
+                    if(includeProfileEvents) {
+                        checkClassLocks(classwaits, detector, stack, tid,locks,tname,classlocks);
+                        processEvent(tid, time, tstate + ";" + tname, stack, "Jstack");
+                    }
                     tid = -1;
                     tname = "";
                     stack.clear();
+                    tmpLocks.clear();
+                    tmpWaits.clear();
                 }
-                tstate = getThreadState(matcher.group(3)).ordinal();
-            } else if (matcher.group(1) != null) {
+                tstate = getThreadState(matcher.group(8)).ordinal();
+            } else if (matcher.group(6) != null) {
                 //process previous stack
                 if (stack.size() != 0) {
                     sampleCount++;
-                    //processEvent(tid, (int) ((time - startEpoch) / 1000000), tstate + ";" + tname, stack, "Jstack");
-                    processEvent(tid, time , tstate + ";" + tname, stack, "Jstack");
+                    if(includeProfileEvents) {
+                        //processEvent(tid, (int) ((time - startEpoch) / 1000000), tstate + ";" + tname, stack, "Jstack");
+                        checkClassLocks(classwaits, detector, stack, tid,locks,tname,classlocks);
+                        processEvent(tid, time, tstate + ";" + tname, stack, "Jstack");
+                    }
                     stack.clear();
+                    tmpLocks.clear();
+                    tmpWaits.clear();
                     tid = -1;
                     tname = "";
                     tstate = -1;
                 }
-                tid = Integer.parseInt(matcher.group(2).toUpperCase());
-                tname = matcher.group(1);
+                tid = Integer.parseInt(matcher.group(7).toUpperCase());
+                tname = matcher.group(6);
+            } else if(matcher.group(2) != null){
+                if(!tmpWaits.contains(matcher.group(2))) {
+                    //detector.addRequest(Integer.toString(tid),matcher.group(2));
+                    waits.add(new MonitorContext(tid, tname, matcher.group(2), matcher.group(3), stack.size(), stack.get(stack.size() - 1)));
+                    tmpWaits.add(matcher.group(2));
+                }
+                //System.out.println(time + "wait :" + tid + ":" + tname + ":" + matcher.group(2) + ":" + matcher.group(3));
+            }else if(matcher.group(4) != null){
+                if(!tmpLocks.contains(matcher.group(4))) {
+                    //detector.addResource(Integer.toString(tid), matcher.group(4));
+                    locks.add(new MonitorContext(tid, tname, matcher.group(4), matcher.group(5), stack.size(), stack.get(stack.size() - 1)));
+                    tmpLocks.add(matcher.group(4));
+                }
+                //System.out.println(time + "lock :" + tid + ":" + tname + ":" + matcher.group(4) + ":" + matcher.group(5) );
+            }else if(matcher.group(9) != null){
+                break;
+            }else if(matcher.group(10) != null){
+                if(!tmpWaits.contains(matcher.group(10))) {
+                    //detector.addRequest(Integer.toString(tid),matcher.group(10));
+                    waits.add(new MonitorContext(tid, tname, matcher.group(10), matcher.group(10), stack.size(), "na"));
+                    tmpWaits.add(matcher.group(10));
+                }
+                //System.out.println(time + "wait :" + tid + ":" + tname + ":" + matcher.group(2) + ":" + matcher.group(3));
             }
         }
         //handle left over stack
         if (stack.size() != 0 && tid != -1) {
             //processEvent(tid, (int) ((time - startEpoch) / 1000000), tstate + ";" + tname, stack, "Jstack");
-            processEvent(tid, time, tstate + ";" + tname, stack, "Jstack");
+            if(includeProfileEvents) {
+                checkClassLocks(classwaits, detector, stack, tid,locks,tname,classlocks);
+                processEvent(tid, time, tstate + ";" + tname, stack, "Jstack");
+            }
         }
-        if (sampleCount > 0) {
+        final int startIndex = jstack.lastIndexOf("Java stack information for the threads listed above");
+        final int endIndex = jstack.lastIndexOf("Found");
+
+        HashMap<Integer, String> allDeadLocks = new HashMap<>();
+        HashSet<String> deadlocks =  new HashSet<>();
+        for(int i = 0; i<locks.size();i++) {
+            String lock = locks.get(i).getLock();
+            boolean isContention = false;
+            for (int j = 0; j < waits.size(); j++) {
+                if (lock.equals(waits.get(j).getLock())) {
+                    detector.addRequest(Integer.toString(waits.get(j).getTid()),waits.get(j).getLock());
+                    isContention=true;
+                }
+            }
+            if(isContention){
+                detector.addResource(Integer.toString(locks.get(i).getTid()),locks.get(i).getLock());
+            }
+        }
+        List<List<String>> deadlockCycles = detector.findDeadlockCycles();
+        if (!deadlockCycles.isEmpty()) {
+            System.out.println("Deadlocks detected!");
+
+            for (List<String> cycle : deadlockCycles) {
+                String curLock = "";
+                HashSet<Integer> tmpTids = new HashSet<>();
+                for(int i = 0; i<cycle.size()-1;i++){
+                    int tmptid = 0;
+                    String tmplock = "";
+                    if (isNumeric(cycle.get(i))) {
+                        if (i + 1 < cycle.size()) {
+                            tmptid = Integer.parseInt(cycle.get(i));
+                            tmplock = cycle.get(i + 1);
+                        }
+                    } else {
+                        tmptid = Integer.parseInt(cycle.get(i + 1));
+                        tmplock = cycle.get(i);
+                    }
+                    deadlocks.add(tmplock);
+                    for(int j = 0; j<locks.size();j++) {
+                        if(locks.get(j).getLock().equals(tmplock) && locks.get(j).getTid() == tmptid) {
+                            if(classlocks.contains(locks.get(j).getLock())) {
+                                curLock += "class init pending tid:" + locks.get(j).getTid() + " lock:" + locks.get(j).getLock() + " frame:" + locks.get(j).getFrame() + "\n";
+                                System.out.println("class init pending tid:" + locks.get(j).getTid() + " lock:" + locks.get(j).getLock() + " frame:" + locks.get(j).getFrame());
+                            }else{
+                                curLock += "locked tid:" + locks.get(j).getTid() + " lock:" + locks.get(j).getLock() + " frame:" + locks.get(j).getFrame() + "\n";
+                                System.out.println("locked tid:" + locks.get(j).getTid() + " lock:" + locks.get(j).getLock() + " frame:" + locks.get(j).getFrame());
+                            }
+                        }
+                    }
+                    for(int j = 0; j<waits.size();j++) {
+                        if(waits.get(j).getLock().equals(tmplock) && waits.get(j).getTid() == tmptid) {
+                            if(classwaits.contains(waits.get(j).getLock())) {
+                                curLock += "wait on the class tid:" + waits.get(j).getTid() + " lock:" + waits.get(j).getLock() + " frame:" + waits.get(j).getFrame() + "\n";
+                                System.out.println("wait on the class tid:" + waits.get(j).getTid() + " lock:" + waits.get(j).getLock() + " frame:" + waits.get(j).getFrame());
+                            }else{
+                                curLock += "waiting to lock tid:" + waits.get(j).getTid() + " lock:" + waits.get(j).getLock() + " frame:" + waits.get(j).getFrame() + "\n";
+                                System.out.println("waiting to lock tid:" + waits.get(j).getTid() + " lock:" + waits.get(j).getLock() + " frame:" + waits.get(j).getFrame());
+                            }
+                        }
+                    }
+                    tmpTids.add(tmptid);
+                }
+                curLock = "Deadlock:" + cycle.toString() + "\n" + curLock;
+                String stackString = "";
+                for (Integer t : tmpTids) {
+                    stackString += getLockStack(t, jstack) + "\n\n";
+                }
+                for (Integer t : tmpTids) {
+                    allDeadLocks.put(t,curLock+"\n\nThread stask(s):\n"+stackString);
+                }
+                System.out.println(curLock);
+            }
+        } else {
+            System.out.println("No deadlock.");
+        }
+
+        if (sampleCount > 0|| !includeProfileEvents) {
+            List<String> header = new ArrayList<>();
+            header.add("timestamp:timestamp");
+            header.add("tidGotLock:text");
+            header.add("threadnameGotLock:text");
+            header.add("lock:text");
+            header.add("Object:text");
+            header.add("frameGotLock:text");
+            header.add("waitcount:number");
+            header.add("lockcount:number");
+            header.add("isDeadlock:text");
+            header.add("lockDetails:text");
+            header.add("waitTids:text");
+            initializeEvent("monitor-context");
+            addHeader("monitor-context", header);
+
+            for(int i = 0; i<locks.size();i++){
+                String lock = locks.get(i).getLock();
+                List<Integer> l = new ArrayList<>();
+                List<Integer> w = new ArrayList<>();
+                l.add(locks.get(i).getPos());
+                for(int j=0; j<waits.size();j++){
+                    if(lock.equals(waits.get(j).getLock())){
+                        l.add(waits.get(j).getTid());
+                        l.add(waits.get(j).getPos());
+                    }
+                }
+                if(l.size() > 1 || deadlocks.contains(lock)){//monitor contention
+                    List<Object> record = new ArrayList<>();
+                    record.add(time/1000000);
+                    record.add(locks.get(i).getTid());
+                    record.add(locks.get(i).getTname());
+                    record.add(lock);
+                    record.add(locks.get(i).getCls());
+                    record.add(locks.get(i).getFrame());
+                    record.add((l.size()-1)/2);
+                    record.add(1);
+                    if(allDeadLocks.containsKey(locks.get(i).getTid())){
+                        record.add("true");
+                    }else{
+                        record.add("false");
+                    }
+                    if(allDeadLocks.containsKey(locks.get(i).getTid())) {
+                        record.add(l.toString() + "\n\n" + allDeadLocks.get(locks.get(i).getTid()));
+                    }else{
+                        record.add(l.toString());
+                    }
+                    processContext(record, locks.get(i).getTid(), "monitor-context");
+                }
+            }
             return true;
         } else {
             return false;
+        }
+    }
+    private String getLockStack(Integer tid, String jstack){
+        int i = jstack.indexOf("#"+Integer.toString(tid));
+
+        int tmp = i;
+        while(tmp >= 0){
+            tmp--;
+            if(jstack.charAt(tmp) == '\n'){
+                tmp++;
+                break;
+            }
+        }
+        int j = jstack.indexOf("\n\n",i);
+        return jstack.substring(tmp, j);
+    }
+
+    class MonitorContext{
+        public int getTid() {
+            return tid;
+        }
+
+        public String getTname() {
+            return tname;
+        }
+
+        public String getLock() {
+            return lock;
+        }
+
+        public String getCls() {
+            return cls;
+        }
+
+        public int getPos() {
+            return pos;
+        }
+
+        int tid;
+        String tname;
+        String lock;
+        String cls;
+        int pos;
+
+        public String getFrame() {
+            return frame;
+        }
+
+        String frame;
+        MonitorContext(int tid, String tname, String lock, String cls, int pos, String frame){
+            this.cls=cls;
+            this.lock=lock;
+            this.tid=tid;
+            this.tname=tname;
+            this.pos=pos;
+            this.frame=frame;
         }
     }
 
@@ -541,6 +967,175 @@ public class EventHandler {
         }
     }
 
+    public void processMemoryEvent(final StringBuilder sb, final IMCStackTrace stackTrace, String type, int tid, long time, long weight, String cls) {
+        if (startEpoch == 0L || time < startEpoch) {
+            setStartEpoch(time);
+        }
+        if (time > endEpoch) {
+            setEndEpoch(time);
+        }
+        StackFrame frame = profiles.get(type);
+        final int hash = getHash(cls == null ? 0 : cls.hashCode(), sb, stackTrace);
+
+        long sz = weight;
+        if (!pidDatas.get(type).containsKey(tid)) {
+            pidDatas.get(type).put(tid, new ArrayList<StackidTime>());
+        }
+        pidDatas.get(type).get(tid).add(new StackidTime(hash, time));
+
+        //if (sampleCount.containsKey(hash)) {
+        //    sz = sampleCount.get(hash);
+        //    frame = profiles.get(type);
+        //}
+
+        if (!eventCounts.containsKey(type)) {
+            eventCounts.put(type, weight);
+        } else {
+            eventCounts.put(type, eventCounts.get(type) + weight);
+        }
+
+        if (sz >= 0) {
+            frame.sz += sz;
+            long sf = 0;
+            int count = stackTrace.getFrames().size();
+            if(cls == null) {
+                for (int i = 0; i < count; i++) {
+
+                    if(i>=maxStackDepth){
+                        i = count-1; //skip other frames
+                        frame = frame.addFrame("...".hashCode(), sz, sf, false, 0);
+                    }
+
+                    final int fN = getFrameNm(sb, stackTrace.getFrames().get(i));
+
+                    if (i == count - 1) {
+                        sf = sz;
+                    }
+                    if (i == 0 || i == count - 1) {
+                        frame = frame.addFrame(fN, sz, sf, true, hash);
+                    } else {
+                        frame = frame.addFrame(fN, sz, sf, false, 0);
+                    }
+                }
+            }else{
+                frame = frame.addFrame(cls.hashCode(), sz, sf, true, hash);
+                if(!frames.containsKey(cls.hashCode())) {
+                    frames.put(cls.hashCode(), cls);
+                }
+                int prevFn = -1;
+                final Map<Integer, Integer> occuranceCount = new HashMap<>();
+                for (int i = 0; i < count; i++) {
+                    int fN;
+                    try {
+                        if (i == count - 1) {
+                            //if (i == count - 1 || sz < threshold) {
+                            fN = getPackageNm(stackTrace.getFrames().get(i), sb, occuranceCount);
+                        } else if (i < 8 ) {
+                            fN = getFrameNm(sb, stackTrace.getFrames().get(i));
+                        } else if (i < 48) {
+                            fN = getFrameClassNm(stackTrace.getFrames().get(i), sb, occuranceCount);
+                        } else {
+                            fN = getPackageNm(stackTrace.getFrames().get(i), sb, occuranceCount);
+                        }
+                    } catch (NullPointerException e) {
+                        if (exceptionCount == 0) {
+                            System.out.println("Warning: processMemoryEvent NullPointerException");
+                            e.printStackTrace(System.out);
+                        }
+                        exceptionCount++;
+                        continue; //Sometimes package name is null
+                    }
+                    if(fN == jetty){
+                        i=count-1;
+                    }
+                    //if(sz < threshold || !(i < 8 || i != (count - 1))) {
+                    if( !(i < 8 || i != (count - 1))) {
+                        if (occuranceCount.size() > 0 && occuranceCount.containsKey(fN) && occuranceCount.get(fN) > 1) {
+                            continue;
+                        }
+                    }
+
+                    if (prevFn == -1 || prevFn != fN) {
+                        prevFn = fN;
+                        if (i == (count - 1)) {
+                            sf = sz;
+                            frame = frame.addFrame(fN, sz, sf, true, hash);
+                        } else {
+                            frame = frame.addFrame(fN, sz, sf, false, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private final int jetty = "org.eclipse.jetty".hashCode();
+
+    private int getPackageNm(final IMCFrame frame, final StringBuilder stringBuilder, final Map<Integer, Integer> occuranceCount) {
+        String name = frame.getMethod().getType().getPackage().getName();
+        if(name == null){
+            name = "NA";
+        }
+        stringBuilder.setLength(0);
+        if (Utils.trimAfterNthMatchingCharacter(name, stringBuilder, 3, '.')) {
+            name = stringBuilder.toString();
+        }
+        if(name.startsWith("org.eclipse.jetty")){
+            if (!frames.containsKey(jetty)) {
+                frames.put(jetty, "org.eclipse.jetty");
+            }
+            return jetty;
+        }
+        int hash = name.hashCode();
+        //if (occuranceCount.size() > 0 || (name.contains("jetty") || name.contains("eclipse"))) {
+        if (occuranceCount.containsKey(hash)) {
+            occuranceCount.put(hash, occuranceCount.get(hash) + 1);
+        } else {
+            occuranceCount.put(hash, 1);
+            if (!frames.containsKey(hash)) {
+                frames.put(hash, name);
+            }
+        }
+        //}
+        return hash;
+    }
+
+    private int getFrameClassNm(final IMCFrame frame, final StringBuilder stringBuilder,  final Map<Integer, Integer> occuranceCount) {
+        final IMCMethod method = frame.getMethod();
+        String fullNm = null;
+        try {
+            fullNm = method.getType().getFullName();
+        } catch (StringIndexOutOfBoundsException e) {
+            fullNm = "unknown";
+        }
+        if(fullNm.startsWith("org.eclipse.jetty")){
+            if (!frames.containsKey(jetty)) {
+                frames.put(jetty, "org.eclipse.jetty");
+            }
+            return jetty;
+        }
+        final String methodNm = method.getMethodName();
+        int hash = CustomHash(0,fullNm.hashCode());
+        if (!frames.containsKey(hash)) {
+            stringBuilder.setLength(0);
+            if (Utils.normalizeFrame(fullNm, stringBuilder, 0)) {
+                String nm = stringBuilder.toString();
+                hash = CustomHash(0,nm.hashCode());
+                if (!frames.containsKey(hash)) {
+                    frames.put(hash, nm);
+                }
+            } else {
+                frames.put(hash, fullNm);
+            }
+        }
+        if (occuranceCount.containsKey(hash)) {
+            occuranceCount.put(hash, occuranceCount.get(hash) + 1);
+        } else {
+            occuranceCount.put(hash, 1);
+        }
+        return hash;
+    }
+
     public void processEvent(final int tid, final long time, final String ctx, final List<String> stackTrace, String type) {
         final int hash = getHash(stackTrace);
         if (!pidDatas.get(type).containsKey(tid)) {
@@ -590,7 +1185,9 @@ public class EventHandler {
 
 
     public void addHeader(String type, List l) {
-        header.put(type, l);
+        if(!header.containsKey(type)) {
+            header.put(type, l);
+        }
     }
 
 
@@ -897,6 +1494,280 @@ public class EventHandler {
         //skip merge pidData
     }
     //Aggregation with filter end
+    public void aggregatePS(final String psOutput, final Long timestamp) throws IOException {
+
+        int topCount = 11;
+        // Split the input into lines
+        String[] lines = psOutput.split("\n");
+
+        if (lines.length < 2) {
+            System.out.println("Invalid ps output format");
+        }
+
+        //PID  PPID   LWP NLWP    VSZ   RSS %MEM %CPU  MAJFL  MINFL CMD
+        List<String> header = new ArrayList<>();
+        header.add("timestamp:timestamp");
+        header.add("tid:text");
+        header.add("ppid:text");
+        header.add("RSS:number");
+        header.add("%CPU:number");
+        header.add("%MEM:number");
+        header.add("COMMAND:text");
+        initializeEvent("ps-processes");
+        addHeader("ps-processes", header);
+
+
+        // Regular expression to match process information based on the number of columns
+        String processInfoPattern = "^\\s{0,}(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([\\d.]+)\\s+([\\d.]+)\\s+(\\d+)\\s+(\\d+)\\s+(.*)$";
+
+        // Pattern and Matcher for process information
+        Pattern processPattern = Pattern.compile(processInfoPattern);
+        for (int i = 1; i < lines.length; i++) {
+            Matcher processMatcher = processPattern.matcher(lines[i].trim());
+            if (processMatcher.matches()) {
+                List<Object> record = new ArrayList<>();
+                record.add(timestamp);//timestamp
+                int tid = Integer.parseInt(processMatcher.group(1));
+                record.add(processMatcher.group(1));//tid
+                record.add(processMatcher.group(2));//ppid
+                record.add(Long.parseLong(processMatcher.group(6)));//rss
+                record.add(Double.parseDouble(processMatcher.group(7)));//cpu
+                record.add(Double.parseDouble(processMatcher.group(8)));//mem
+                String cmd = processMatcher.group(11);//cmd
+                cmd.trim();
+                int index = cmd.indexOf("jdk/");
+                if (cmd.length() > 232) {
+                    if(index != -1){
+                        int index1 = cmd.indexOf("/java");
+                        record.add(cmd.substring(index,index1+5) + "..." + cmd.substring(cmd.length() - 30));
+                    }else {
+                        record.add(cmd.substring(0, 100) + "..." + cmd.substring(cmd.length() - 30));
+                    }
+                }else{
+                    if(index != -1){
+                        record.add(cmd.substring(cmd.indexOf("jdk/"), cmd.length()));
+                    }else {
+                        record.add(cmd);
+                    }
+                }
+                processContext(record, tid, "ps-processes");
+            }
+        }
+        System.out.println("aggregatePS");
+    }
+    public void aggregatePIDSTAT(final String pidstatOutput, final Long timestamp) throws IOException {
+        // Split the input into lines
+        String[] lines = pidstatOutput.split("\n");
+        if (lines.length < 2) {
+            System.out.println("Invalid ps output format");
+        }
+        //PID  PPID   LWP NLWP    VSZ   RSS %MEM %CPU  MAJFL  MINFL CMD
+        List<String> header = new ArrayList<>();
+        header.add("timestamp:timestamp");
+        header.add("tgid:text");
+        header.add("tid:text");
+        header.add("user%:number");
+        header.add("system%:number");
+        header.add("%CPU:number");
+        header.add("CPU:number");
+        header.add("RSS:number");
+        header.add("%MEM:number");
+        header.add("COMMAND:text");
+        initializeEvent("pidstat-extract");
+        addHeader("pidstat-extract", header);
+        //#Time   UID      TGID(2)       TID(3)    %usr %system  %guest    %CPU(7)   CPU  minflt/s  majflt/s     VSZ    RSS(12)   %MEM(13)   kB_rd/s   kB_wr/s kB_ccwr/s   cswch/s nvcswch/s  Command(19)
+        for (int i = 3; i < lines.length; i++) {
+            List<Object> record = new ArrayList<>();
+            String[] parts = lines[i].trim().split("\\s+");
+            if(parts.length > 10){
+                int tid = Integer.parseInt(parts[3]);
+                try {
+                    record.add(Long.parseLong(parts[0])*1000);
+                    record.add(Integer.parseInt(parts[2]));
+                    record.add(tid);//tid
+                    record.add(Double.parseDouble(parts[4]));
+                    record.add(Double.parseDouble(parts[5]));
+                    record.add(Double.parseDouble(parts[7]));
+                    record.add(Integer.parseInt(parts[8]));
+                    record.add(Long.parseLong(parts[12]));
+                    record.add(Double.parseDouble(parts[13]));
+                    record.add(parts[19]);
+                }catch (Exception e){
+                    System.out.println("check");
+                }
+                processContext(record, tid, "pidstat-extract");
+            }
+        }
+        System.out.println("aggregatePS");
+    }
+
+    public void aggregateTop(final String topOutput, final Long timestamp) throws IOException {
+        String[] sections = topOutput.split("\n\n");
+        if (sections.length >= 1) {
+            // Process host-level metrics
+            String hostMetrics = sections[0];
+            parseTopHostMetrics(hostMetrics, timestamp);
+        }
+        if (sections.length >= 2) {
+            // Process individual process details
+            String processDetails = sections[1];
+            parseTopProcessDetails(processDetails, timestamp);
+        }
+    }
+
+    public void parseTopHostMetrics(final String hostMetrics, final Long timestamp){
+// Regular expressions to match host-level metrics
+        String loadAvgPattern = "load average: ([\\d.]+), ([\\d.]+), ([\\d.]+)";
+        String taskInfoPattern = "Tasks: (\\d+) total,\\s{0,}(\\d+) running,\\s{0,}(\\d+) sleeping,\\s{0,}(\\d+) stopped,\\s{0,}(\\d+) zombie";
+        String cpuUsagePattern = "%Cpu\\(s\\): ([\\d.]+) us,\\s{0,}([\\d.]+) sy,\\s{0,}([\\d.]+) ni,\\s{0,}([\\d.]+) id,\\s{0,}([\\d.]+) wa,\\s{0,}([\\d.]+) hi,\\s{0,}([\\d.]+) si,\\s{0,}([\\d.]+) st";
+        String memInfoPattern = "KiB\\s{0,}Mem\\s{0,}:\\s{0,}(\\d+\\+?)\\s{0,}total,\\s{0,}(\\d+)\\s{0,}free,\\s{0,}(\\d+)\\s{0,}used,\\s{0,}(\\d+)\\s{0,}buff/cache";
+        String swapInfoPattern = "KiB Swap:\\s{0,}(\\d+)\\s{0,}total,\\s{0,}(\\d+)\\s{0,}free,\\s{0,}(\\d+)\\s{0,}used";
+
+        // Pattern and Matcher for host-level metrics
+        Pattern loadAvgPatternRegex = Pattern.compile(loadAvgPattern);
+        Pattern taskInfoPatternRegex = Pattern.compile(taskInfoPattern);
+        Pattern cpuUsagePatternRegex = Pattern.compile(cpuUsagePattern);
+        Pattern memInfoPatternRegex = Pattern.compile(memInfoPattern);
+        Pattern swapInfoPatternRegex = Pattern.compile(swapInfoPattern);
+
+        // Matcher for host-level metrics
+        Matcher loadAvgMatcher = loadAvgPatternRegex.matcher(hostMetrics);
+        Matcher taskInfoMatcher = taskInfoPatternRegex.matcher(hostMetrics);
+        Matcher cpuUsageMatcher = cpuUsagePatternRegex.matcher(hostMetrics);
+        Matcher memInfoMatcher = memInfoPatternRegex.matcher(hostMetrics);
+        Matcher swapInfoMatcher = swapInfoPatternRegex.matcher(hostMetrics);
+
+        List<String> header = new ArrayList<>();
+        header.add("timestamp:timestamp");
+        header.add("tid:text");
+        header.add("monitor:text");
+        header.add("LoadAvg1min:number");
+        header.add("LoadAvg5min:number");
+        header.add("LoadAvg15min:number");
+
+        /*
+        header.add("TotalTasks:number");
+        header.add("RunningTasks:number");
+        header.add("SleepingTasks:number");
+        header.add("StoppedTasks:number");
+        header.add("ZombieTasks:number");*/
+
+        header.add("UserCPU:number");
+        header.add("SystemCPU:number");
+        header.add("Nice:number");
+        header.add("IdleCPU:number");
+        header.add("I/O wait:number");
+        /*header.add("Hardware interrupt:number");
+        header.add("Software interrupt:number");
+        header.add("Steal:number");*/
+
+        /*header.add("TotalMem:number");
+        header.add("FreeMem:number");
+        header.add("UsedMem:number");
+        header.add("Buffer/Cache:number");*/
+
+        /*header.add("TotalSwap:number");
+        header.add("FreeSwap:number");
+        header.add("UsedSwap:number");*/
+
+        initializeEvent("top-hostmetrics");
+        addHeader("top-hostmetrics", header);
+
+        List<Object> record = new ArrayList<>();
+        record.add(timestamp);//timestamp
+        record.add("top-hostmetrics".hashCode());//tid
+        record.add("top-hostmetrics");//tid
+
+        // Find and display host-level metrics
+        if (loadAvgMatcher.find()) {
+            record.add(Double.parseDouble(loadAvgMatcher.group(1)));
+            record.add(Double.parseDouble(loadAvgMatcher.group(2)));
+            record.add(Double.parseDouble(loadAvgMatcher.group(3)));
+        }
+
+        if (taskInfoMatcher.find() && false) {
+            record.add(Integer.parseInt(taskInfoMatcher.group(1)));
+            record.add(Integer.parseInt(taskInfoMatcher.group(2)));
+            record.add(Integer.parseInt(taskInfoMatcher.group(3)));
+            record.add(Integer.parseInt(taskInfoMatcher.group(4)));
+            record.add(Integer.parseInt(taskInfoMatcher.group(5)));
+        }
+
+        if (cpuUsageMatcher.find()) {
+            record.add(Double.parseDouble(cpuUsageMatcher.group(1)));
+            record.add(Double.parseDouble(cpuUsageMatcher.group(2)));
+            record.add(Double.parseDouble(cpuUsageMatcher.group(3)));
+            record.add(Double.parseDouble(cpuUsageMatcher.group(4)));
+            record.add(Double.parseDouble(cpuUsageMatcher.group(5)));
+            //record.add(Double.parseDouble(cpuUsageMatcher.group(6)));
+            //record.add(Double.parseDouble(cpuUsageMatcher.group(7)));
+            //record.add(Double.parseDouble(cpuUsageMatcher.group(8)));
+        }
+
+        if (memInfoMatcher.find() && false) {
+            record.add(memInfoMatcher.group(1));
+            record.add(memInfoMatcher.group(2));
+            record.add(memInfoMatcher.group(3));
+            record.add(memInfoMatcher.group(4));
+        }
+
+        if (swapInfoMatcher.find() && false) {
+            record.add(swapInfoMatcher.group(1));
+            record.add(swapInfoMatcher.group(2));
+            record.add(swapInfoMatcher.group(3));
+        }
+        processContext(record, "top-hostmetrics".hashCode(), "top-hostmetrics");
+        System.out.println("parseTopHostMetrics");
+    }
+    public void parseTopProcessDetails(final String processDetails, final Long timestamp){
+        List<String> parsedProcesses = new ArrayList<>();
+        int topCount = 11;
+        // Split the input into lines
+        String[] lines = processDetails.split("\n");
+
+        if (lines.length < 2) {
+            System.out.println("Invalid top output format");
+            return;
+        }
+
+        List<String> header = new ArrayList<>();
+        header.add("timestamp:timestamp");
+        header.add("tid:text");
+        header.add("user:text");
+        header.add("cpu:number");
+        header.add("memory:number");
+        header.add("time:text");
+        header.add("command:text");
+        initializeEvent("top-processes");
+        addHeader("top-processes", header);
+
+        for (int i = 1; i < topCount; i++) {
+            String[] tokens = lines[i].trim().split("\\s+");
+            List<Object> record = new ArrayList<>();
+            record.add(timestamp);//timestamp
+            record.add(Integer.parseInt(tokens[0]));//tid
+            record.add(tokens[1]);//user
+            record.add(Double.parseDouble(tokens[8]));//cpu
+            record.add(Double.parseDouble(tokens[9]));//memory
+            record.add(tokens[10]);//time
+
+            int index = lines[i].indexOf("jdk/");
+            if(index != -1){
+                tokens[11] =  lines[i].substring( index,  lines[i].length());
+                if(tokens[11].length() > 100) {
+                    record.add(tokens[11].substring(0, 100) + "...");
+                }else{
+                    record.add(tokens[11]);
+                }
+            }else{
+                record.add(tokens[11] + " ... " + tokens[tokens.length - 1]);
+            }
+
+            processContext(record, Integer.parseInt(tokens[0]), "top-processes");
+        }
+        System.out.println("parseTopProcessDetails");
+    }
+
 
     public void aggregateLogContext(final ContextResponse res) throws IOException {
 
@@ -1765,6 +2636,8 @@ public class EventHandler {
             }
             int chunkSamplesTotal = 0;
             chunkSurfaceData.clear();
+
+
             final ExecutorService executorService = Executors.newFixedThreadPool(10);
             for (Integer stackid : stackMap.keySet()) {
                 chunkSamplesTotal = chunkSamplesTotal + stackMap.get(stackid);
@@ -1777,6 +2650,12 @@ public class EventHandler {
             } catch (InterruptedException e) {
                 System.out.println(e);
             }
+
+            /*for (Integer stackid : stackMap.keySet()) {
+                chunkSamplesTotal = chunkSamplesTotal + stackMap.get(stackid);
+                getSurfaceData(source,stackid,stackMap.get(stackid));
+            }*/
+
             chunkSamplesTotalList.add(chunkSamplesTotal);
 
             for (String key : chunkSurfaceData.keySet()) {
@@ -1916,8 +2795,13 @@ public class EventHandler {
 
     public void getAllPaths(final StackFrame baseJsonTree, final List<Integer> list) {
         if (baseJsonTree.getCh() == null) {
-            if (baseJsonTree.getSz() > 0) { //do it for all counts
-                Map.Entry<Integer, Integer> entry = baseJsonTree.getSm().entrySet().iterator().next();
+            if (baseJsonTree.getSz() > 0 ) { //do it for all counts
+                try {
+                    Map.Entry<Integer, Integer> entry = baseJsonTree.getSm().entrySet().iterator().next();
+                }catch (Exception e){
+                    return;//check this, todo
+                    //e.printStackTrace();
+                }
                 final StringBuilder builder = new StringBuilder();
                 for (int i = 0; i < list.size(); i++) {
                     if (i == 0) {
@@ -1999,6 +2883,88 @@ public class EventHandler {
 
         }
         return null;
+    }
+
+
+    public static class SFContextResponse {
+        public Map<Integer, List<SFLogContext>> records; //map of pid and List where list is log context entries
+        public List<Entry> tidlist; // list of entry where entry is a map of k=pid and v=runtime in descending order
+
+        SFContextResponse() {
+
+        }
+
+        SFContextResponse(final Map<Integer, List<SFLogContext>> records, final List<Entry> tidlist) {
+            this.records = records;
+            this.tidlist = tidlist;
+        }
+
+        public Map<Integer, List<SFLogContext>> getRecords() {
+            return records;
+        }
+
+        public List<Entry> getTidlist() {
+            return tidlist;
+        }
+
+        public void setRecords(final Map<Integer, List<SFLogContext>> records) {
+            this.records = records;
+        }
+
+        public void setTidlist(final List<Entry> tidlist) {
+            this.tidlist = tidlist;
+        }
+    }
+    public static class SFLogContext {
+        public List<Object> getRecord() {
+            return record;
+        }
+        public void setRecord(List<Object> record) {
+            this.record = record;
+        }
+        List<Object> record = new ArrayList<>();
+        SFLogContext() {
+        }
+    }
+    public void aggregateSFLogContext(final SFContextResponse res) throws IOException {
+
+        if (this.sfrecords == null) {
+            sfrecords = res.records;
+        } else {
+            for (final Integer key : res.records.keySet()) {
+                if (this.sfrecords.containsKey(key)) {
+                    final List<SFLogContext> list = this.sfrecords.get(key);
+                    for (final SFLogContext lc : res.records.get(key)) {
+                        list.add(lc);
+                    }
+                } else {
+                    this.sfrecords.put(key, res.records.get(key));
+                }
+            }
+        }
+    }
+    public Object getSFLogContext() {
+        final Map<Integer, Long> tidMap = new HashMap<>();
+        int cpu = 0;
+        int pid = 0;
+        int type = 0;
+        for (final Integer key : this.sfrecords.keySet()) {
+            final List<SFLogContext> list = this.sfrecords.get(key);
+            for (final SFLogContext lc : list) {
+                type = (Integer) lc.record.get(0);
+                //include only context log types
+                if (type == EventType.CONTEXT.ordinal()) {
+                    cpu = (Integer) lc.record.get(7);
+                    pid = (Integer) lc.record.get(2);
+                    if (tidMap.containsKey(pid)) {
+                        tidMap.put(pid, cpu + tidMap.get(pid));
+                    } else {
+                        tidMap.put(pid, (long) cpu);
+                    }
+                }
+            }
+        }
+        return new SFContextResponse(sfrecords, sortMap(tidMap));
     }
 }
 

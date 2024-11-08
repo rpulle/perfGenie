@@ -4,11 +4,13 @@ import com.salesforce.cantor.h2.CantorOnH2;
 import org.testng.annotations.AfterSuite;
 import org.testng.annotations.BeforeSuite;
 import org.testng.annotations.Test;
+import perfgenie.utils.Config;
 import perfgenie.utils.EventStore;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.testng.AssertJUnit.assertEquals;
@@ -17,10 +19,11 @@ public class DownloadUploadTest {
     private final long timestamp = System.currentTimeMillis();
 
     private static EventStore eventStore;
+    private static Config config = new Config();
 
     static {
         try {
-            eventStore = new EventStore(getCantorInstance());
+            eventStore = new EventStore(getCantorInstance(), config);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -33,9 +36,10 @@ public class DownloadUploadTest {
     @Test
     public void test() throws IOException {
         final String original = Resources.toString(Resources.getResource("test.jfr"), StandardCharsets.UTF_8);
-        eventStore.addEvent(timestamp, new HashMap<>(), new HashMap<>(), original);
-
-        final String downloaded = eventStore.getEvent(timestamp, timestamp, new HashMap<>(), new HashMap<>(), original.length());
+        final Map<String, String> dimMap = new HashMap<>();
+        dimMap.put("source","genie");
+        eventStore.addGenieLargeEvent(timestamp, dimMap, new HashMap<>(), original, "dev", true);
+        final String downloaded = eventStore.getGenieLargeEvent(timestamp, timestamp, dimMap, new HashMap<>(),"dev");
         assertEquals(original, downloaded);
     }
 

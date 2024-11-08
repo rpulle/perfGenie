@@ -174,25 +174,10 @@
         console.log("prepData time :" + (end - start));
     }
 
-    function addContextDataJstack(){
-        let treeToProcess = getContextTree(1,"Jstack");
-        let contextTidMap = treeToProcess.context.tidMap;
-        prepData("Jstack");
-
-        for(var tid in contextTidMap){
-            for (let i = 0; i < contextTidMap[tid].length; i++) {
-                if (contextTidMap[tid][i].tn == undefined) {
-                    let pair = contextTidMap[tid][i].ctx.split(";");
-                    contextTidMap[tid][i].tn = pair[1];
-                    contextTidMap[tid][i].ts = getThreadState(pair[0]);
-                    contextTidMap[tid][i].sampleNo = timestampArray.indexOf(contextTidMap[tid][i].time) + 1;
-                }
-            }
-        }
-    }
-
 
     function  updateProfilerViewTsview(level,skipFilter){
+        let eventType = getEventType();
+
         addTabNote(false,"");
 
         if(compareTree){
@@ -222,20 +207,21 @@
             let end = performance.now();
             console.log("filterToLevel time:" + (end - start));
 
-            let treeToProcess = getActiveTree(getEventType(), isCalltree);
-            let selectedLevel = getSelectedLevel(getActiveTree(getEventType(), false));
+            let treeToProcess = getActiveTree(eventType, isCalltree);
+            let selectedLevel = getSelectedLevel(getActiveTree(eventType, false));
 
-            if (currentLoadedTree === treeToProcess && prevOption === currentOption && isRefresh === false && isLevelRefresh === false && prevSelectedLevel === selectedLevel) {
-                console.log("no change in tree, option:" + (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
+            if (prevCustomEvent === customEvent && currentLoadedTree === treeToProcess && prevOption === currentOption && isRefresh === false && isLevelRefresh === false && prevSelectedLevel === selectedLevel) {
+                console.log("no change in tree, option:" + (prevCustomEvent === customEvent) +":"+ (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
                 end = performance.now();
                 console.log("updateProfilerViewTsview 1 time:" + (end - start));
                 return;
             }else{
-                console.log("change in tree, option:" + (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
+                console.log("change in tree, option:" + (prevCustomEvent === customEvent) +":"+ (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
             }
 
             currentLoadedTree = treeToProcess;
             prevOption = currentOption;
+            prevCustomEvent = customEvent;
             prevSelectedLevel = selectedLevel;
             isLevelRefresh = false;
             threshold = 0;
@@ -248,31 +234,22 @@
                 return;
             }
 
-            if(getEventType() != "Jstack"){
+            if(!(eventType == "Jstack" || eventType == "json-jstack")){
                 document.getElementById("datatable-guid").innerHTML = "";
-                addTabNote(true,"Thread state view supported only for Jstack")
+                addTabNote(true,"Thread state view supported only for "+getProfileName(eventType))
                 return;
             }else{
                 addTabNote(false,"")
             }
 
-/*
-            if(getEventType() != "Jstack"){
-                $("#tsview-note").html("Note: Thread state view supported only for Jstack");
-
-                return;
-            }else{
-                $("#tsview-note").html("");
-            }*/
-
 
             var tableInnerHTML = "";
 
-            jstack = getContextTree(1,"Jstack");
-            context = getContextData();
-            let startMilli = getContextTree(1,"Jstack").context.start;
+            jstack = getContextTree(1,eventType);
+            context = getContextData(1);
+            let startMilli = getContextTree(1,eventType).context.start;
 
-            addContextData(selectedLevel, "Jstack");
+            addContextData(eventType, 1);
 
 
 
@@ -282,14 +259,14 @@
 
             // build header row containing number of colums equal to number of unique timestamps/samples
             tableInnerHTML += timestampHeader;
-            let treeToProcesstmp = getActiveTree(getEventType(), false);
+            let treeToProcesstmp = getActiveTree(eventType, false);
             if(selectedLevel !== FilterLevel.UNDEFINED) {
-                console.log("tsview show level:"+selectedLevel +":"+getEventType());
+                console.log("tsview show level:"+selectedLevel +":"+eventType);
                 $.each(filteredStackMap[selectedLevel], function (tid, samples) {
                     tableInnerHTML += buildRow(treeToProcesstmp, selectedLevel, tid, samples, timestampArray.length);
                 });
             }else{
-                console.log("tsview show level:"+selectedLevel +":"+getEventType());
+                console.log("tsview show level:"+selectedLevel +":"+eventType);
                 $.each(jstack.context.tidMap, function (tid, samples) {
                     tableInnerHTML += buildRow(treeToProcesstmp, selectedLevel, tid, samples, timestampArray.length);
                 });
@@ -312,9 +289,9 @@
                 addTabNote(false,"")
             }
 
-            if(getEventType() != "Jstack"){
+            if(!(eventType == "Jstack" || eventType == "json-jstack")){
                 document.getElementById("datatable-guid").innerHTML = "";
-                addTabNote(true,"Thread state view supported only for Jstack")
+                addTabNote(true,"Thread state view supported only for "+getProfileName(eventType))
                 return;
             }else{
                 addTabNote(false,"")
@@ -322,13 +299,13 @@
 
             let start = performance.now();
 
-            let selectedLevel = getSelectedLevel(getActiveTree("Jstack", false));
+            let selectedLevel = getSelectedLevel(getActiveTree(eventType, false));
 
             var tableInnerHTML = "";
-            jstack = getContextTree(1,"Jstack");
-            context = getContextData();
-            let startMilli = getContextTree(1,"Jstack").context.start;
-            addContextData(selectedLevel, "Jstack");
+            jstack = getContextTree(1,eventType);
+            context = getContextData(1);
+            let startMilli = getContextTree(1,eventType).context.start;
+            addContextData(eventType, 1);
 
 
             let start1 = performance.now();
@@ -337,14 +314,14 @@
 
             // build header row containing number of colums equal to number of unique timestamps/samples
             tableInnerHTML += timestampHeader;
-            let treeToProcesstmp = getActiveTree(getEventType(), false);
+            let treeToProcesstmp = getActiveTree(eventType, false);
             if(selectedLevel !== FilterLevel.UNDEFINED) {
-                console.log("tsview show level:"+selectedLevel +":"+getEventType());
+                console.log("tsview show level:"+selectedLevel +":"+eventType);
                 $.each(filteredStackMap[selectedLevel], function (tid, samples) {
                     tableInnerHTML += buildRow(treeToProcesstmp, selectedLevel, tid, samples, timestampArray.length);
                 });
             }else{
-                console.log("tsview show level:"+selectedLevel +":"+getEventType());
+                console.log("tsview show level:"+selectedLevel +":"+eventType);
                 $.each(jstack.context.tidMap, function (tid, samples) {
                     tableInnerHTML += buildRow(treeToProcesstmp, selectedLevel, tid, samples, timestampArray.length);
                 });
@@ -440,7 +417,7 @@
         let javaStack = "";
 
         let tmpcontextTree1Level1 = getStackFrameV1("root");
-        let tmpActiveTree = getActiveTree("Jstack", false);
+        let tmpActiveTree = getActiveTree(getEventType(), false);//todo need to use eventType argument sStack
         //updateStackIndex(tmpActiveTree);
         let arr = getTreeStack(tmpActiveTree, stackid, tmpcontextTree1Level1, 1);
 
@@ -469,9 +446,10 @@
         let spanIndex = -1;
         let timestampIndex = -1;
 
+        let localContextData = getContextData(1);
 
-        for (let val in contextData.header[customEvent]) {
-            const tokens = contextData.header[customEvent][val].split(":");
+        for (let val in localContextData.header[customEvent]) {
+            const tokens = localContextData.header[customEvent][val].split(":");
             if (tokens[1] == "number") {
                 metricsIndexArray.push(val);
                 metricsIndexMap[tokens[0]] = val;
@@ -479,7 +457,7 @@
             if (groupBy == tokens[0]) {
                 groupByIndex = val;
             }
-            if ("duration" == tokens[0]) { // TODO: take from user
+            if ("duration" == tokens[0] || "runTime" == tokens[0]) { // TODO: take from user
                 spanIndex = val;
             }
             if ("timestamp" == tokens[0]) { // TODO: take from user
@@ -639,5 +617,262 @@
             }
         });
         return styleColor;
+    }
+    
+    
+    //svg thread state
+    function svgShowReqTSV(evt) {
+        var svgobj = evt.target;
+        if (svgobj.getAttribute("style") == undefined || !svgobj.getAttribute("style").includes("opacity: 0")) {
+            showRequestContextPopupTSV(svgobj.getAttribute("id"));
+        }
+    }
+
+    function OnScroll0TSV(div) {
+        var d2 = document.getElementById("requestbarchartTSV");
+        d2.scrollTop = div.scrollTop;
+    }
+
+    function OnScroll1TSV(div) {
+        var d2 = document.getElementById("requestbarchartTSV");
+        d2.scrollLeft = div.scrollLeft;
+    }
+
+    function OnScroll2TSV(div) {
+        var d1 = document.getElementById("xaxisidTSV");
+        var d0 = document.getElementById("yaxisidTSV");
+        d0.scrollTop = div.scrollTop;
+        d1.scrollLeft = div.scrollLeft;
+    }
+
+    function addXAxisTSV(id, top, right, bottom, left, min_x, max_x, w, h, contextStart, downScale) {
+        const margin = {top: top, right: right, bottom: bottom, left: left};
+        const width = w - margin.left - margin.right,
+            height = h - margin.top - margin.bottom;
+        const g = d3.select(id).append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+        let ticCount = (max_x - min_x) / 75;
+
+        let xScale = d3.scaleLinear()
+            .domain([min_x, max_x])
+            .range([0, width]);
+
+        let curTick = 0;
+        let xAxisGenerator = d3.axisBottom()
+            .scale(xScale)
+            .tickPadding(5)
+            .ticks(ticCount)
+            .tickFormat(function (d) {
+                if (curTick == 0) {
+                    curTick = 1;
+                    return moment.utc(d * downScale + contextStart).format('MM-DD HH:mm:ss');
+                } else {
+                    return moment.utc(d * downScale + contextStart).format('mm:ss');
+                }
+            });
+
+        let xAxis = g.append("g")
+            .call(xAxisGenerator);
+
+        xAxis.selectAll(".tick text")
+            .attr("y", 6)
+            .attr("x", 6)
+            .style("text-anchor", "start");
+    }
+
+    function addYAxis(id, top, right, bottom, left, min_x, max_x, w, h) {
+        const margin = {top: top, right: right, bottom: bottom, left: left};
+        const width = w - margin.left - margin.right,
+            height = h - margin.top - margin.bottom;
+        const g = d3.select(id).append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+        let xScale = d3.scaleLinear()
+            .domain([min_x, max_x])
+            .range([0, h]);
+
+        g.append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", -20)
+            .attr("x", -100)
+            .attr("dy", "1em")
+            .style("text-anchor", "middle")
+            .text("Thread ID");
+
+        let xAxisGenerator = d3.axisRight()
+            .scale(xScale)
+            .ticks(max_x)
+            .tickSize(4)
+            .tickFormat(function (d) {
+                return tidIndex[d];
+            });
+
+        let xAxis = g.append("g")
+            .call(xAxisGenerator);
+
+        xAxis.selectAll(".tick text")
+            .style("font-size", 8)
+            .attr("y", 4)
+            .attr("x", 3)
+            .style("text-anchor", "start");
+    }
+
+    function drowStateChartTSV(filteredTidRequests, chartWidth, downScale, minStart, chartHeight, tidSortByMetricMap, groupByCountSum, timestampIndex, spanIndex, groupByIndex, sortByIndex, tidRowIndex, isContextViewFiltered, customEvent, groupByTypeSortByMetricMap) {
+
+        if (customEvent == otherEvent) {
+            getOtherHintNote(false, otherEvent);
+        } else {
+            if (!isContextViewFiltered) {
+                getContextHintNote(false, customEvent);
+            }
+        }
+
+
+        document.getElementById("statetableTSV").innerHTML = "<div class='row col-lg-12' style='padding: 0 !important;'>"
+            + "<div  style='width: 4%;float: left;'></div>"
+            + "<div style=\"max-height: 50px;overflow: hidden;width: 96%;float: right;\">"
+            + " <div class='row col-lg-12' style='padding: 0 !important;'>"
+            + "   <div class='xaxisidTSV col-lg-10' id='xaxisidTSV' style=\"padding: 0 !important; max-height: 50px;overflow: scroll;overflow-y: hidden;\" onscroll='OnScroll1TSV(this)'>"
+            + "   </div>"
+            + "   <div class='col5 col-lg-2' style=\"padding: 0 !important; max-height: 50px;overflow: hidden;\" id='col5'>"
+            + "   </div>"
+            + " </div>"
+            + "</div>"
+            + "</div>"
+
+            + "<div class='row col-lg-12' style='padding: 0 !important;'>"
+            + " <div  id='yaxisidTSV' style=\"max-height: 400px;overflow: scroll;overflow-x: hidden;width: 4%;float: left;\" class='yaxisidTSV' onscroll='OnScroll0TSV(this)'></div>"
+            + " <div style=\"max-height: 400px;overflow: hidden;width: 96%;float: right;\">"
+            + "    <div class='row col-lg-12' style='padding: 0 !important;'>"
+            + "      <div class='requestbarchartTSV col-lg-10' onscroll='OnScroll2TSV(this)' style=\"padding: 0 !important; height: 400px;max-height: 400px;overflow: auto;\" id='requestbarchartTSV'>"
+            + "      </div>"
+            + "      <div class='legendid col-lg-2' style=\"padding: 10px !important; height: 400px; max-height: 400px;overflow: auto;\" id='legendid'>"
+            + "      </div>"
+            + "    </div>"
+            + " </div>"
+            + "</div>";
+
+        d3.select("#requestbarchartTSV").append("svg").attr("width", chartWidth).attr("height", chartHeight);
+
+        let d3svg = d3.select("#requestbarchartTSV").select("svg");
+
+        TooltipTSV = d3.select("#requestbarchartTSV")
+            .append("div")
+            .style("opacity", 0)
+            .attr("class", "tooltip")
+            .style("background-color", "white")
+            .style("border", "solid")
+            .style("border-width", "2px")
+            .style("border-radius", "5px")
+            .style("padding", "5px");
+
+        let h = 8;
+        let y = 0;
+
+        let localContextData = getContextData(1);
+        let contextDataRecords = undefined;
+        if (localContextData != undefined && localContextData.records != undefined) {
+            contextDataRecords = localContextData.records[customEvent];
+        }
+
+        let curI = 0;
+        let countMax = seriesCount;
+        for (let [tid, value] of tidSortByMetricMap) {
+            if (curI >= countMax) {
+                break;
+            }
+            curI++;
+
+            let curTime = minStart;
+            let x = 0;
+            for (let index of filteredTidRequests[tid]) {
+                let record = contextDataRecords[tid][index].record;
+                let tmpEpoch = record[timestampIndex];
+
+                let tmpRunTime = record[spanIndex] == undefined ? 0 : record[spanIndex];
+                if (tmpEpoch < minStart) {
+                    tmpRunTime = tmpRunTime - (minStart - tmpEpoch);
+                    tmpEpoch = minStart;
+                }
+                if (tmpEpoch >= curTime) {
+                    d3svg.append("rect")
+                        .attr("width", (tmpEpoch - curTime) / downScale)
+                        .attr("height", h)
+                        .attr("x", x)
+                        .attr("y", y)
+                        .attr("fill", "white");
+
+                    x = x + (tmpEpoch - curTime) / downScale;
+                    let key = (groupByIndex != -1 &&  record[groupByIndex] != undefined && record[groupByIndex].slice != undefined) ? record[groupByIndex].slice(0, groupByLength) : record[groupByIndex];
+                    let metricVal = record[sortByIndex];
+                    let key1 = tmpColorMap.get(key);
+                    key1 = key1.replace("#", "_");
+                    if (tmpRunTime > spanThreshold) {
+                        d3svg.append("rect")
+                            .attr("width", tmpRunTime / downScale)
+                            .attr("height", h)
+                            .attr("d", key)
+                            .attr("x", x)
+                            .attr("y", y)
+                            .attr("fill", tmpColorMap.get(key))
+                            .attr("class", key1 + " tgl")
+                            .attr("onclick", 'svgShowReqTSV(evt)')
+                            .attr("id", record[tidRowIndex] + "_" + record[timestampIndex])
+                            .on("mouseover", function () {
+                                return mouseoverSVGTSV(key1, this);
+                            })
+                            .on("mousemove", function () {
+                                return mousemoveSVGTSV(getHearderFor(groupBy) + ": " + key, key1, this, sortBy + ": " + metricVal);
+                            })
+                            .on("mouseleave", function () {
+                                return mouseleaveSVGTSV(key1, this);
+                            });
+                    }
+
+                    x = x + tmpRunTime / downScale;
+
+                    curTime = tmpEpoch + tmpRunTime;
+                }
+
+            }
+            y = y + h;
+        }
+    }
+
+    var TooltipTSV = undefined;
+    var mouseoverSVGTSV = function (key, obj) {
+        if (d3.select(obj).attr("style") == undefined || !d3.select(obj).attr("style").includes("opacity: 0")) {
+
+            TooltipTSV
+                .style("opacity", 1);
+
+            d3.select(obj)
+                .style("stroke", "black")
+                .style("cursor", "pointer");
+        }
+    }
+
+    var mousemoveSVGTSV = function (d, key, obj, metricVal) {
+        if (d3.select(obj).attr("style") == undefined || !d3.select(obj).attr("style").includes("opacity: 0")) {
+            TooltipTSV
+                .html(d + ", " + metricVal + '<br>Click to see request profile samples and context')
+                .style("left", (d3.mouse(obj)[0] + 20) + "px")
+                .style("top", (d3.mouse(obj)[1]) + "px");
+        }
+    }
+
+    var mouseleaveSVGTSV = function (key, obj) {
+        if (d3.select(obj).attr("style") == undefined || !d3.select(obj).attr("style").includes("opacity: 0")) {
+            TooltipTSV
+                .style("opacity", 0);
+            d3.select(obj)
+                .style("stroke", "none")
+                .style("cursor", "default");
+        }
     }
 </script>

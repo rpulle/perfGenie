@@ -7,7 +7,7 @@
  */
 </script>
 
-<div style="padding-left: 25px;">
+<div  class='ui-widget' style="padding-left: 0px;">
     <img title='Base (blue), Common (black) and New (beige)' style="cursor: pointer" opt=1 class="img-swap" height="24px"
          align="middle" src="/images/aub_on.png">
     <img title='Base (blue) and Common (black)' style="cursor: pointer" opt=2 height="24px" class="img-swap" align="middle"
@@ -138,22 +138,29 @@ In other words, data that's in the second set but not in the first will not be d
             if (!filterToLevel(level)) {
                 let end = performance.now();
                 console.debug("filterToLevel time:" + (end - start));
+                $("#flamegraphdiv").html("");//reset
+                currentLoadedTree = undefined;
+                addTabNote(true, getProfileName(getEventType()) + " Not available to show");
                 return;
             }
             let end = performance.now();
             console.debug("filterToLevel time:" + (end - start));
 
             let treeToProcess = getActiveTree(getEventType(), isCalltree);
-            let selectedLevel = getSelectedLevel(getActiveTree(getEventType(), false));
+            //let selectedLevel = getSelectedLevel(getActiveTree(getEventType(), false));
+            let selectedLevel = getSelectedLevel(getTree(1, getEventType()));//both trees should be at the same level
 
-            if (currentLoadedTree === treeToProcess && prevOption === currentOption && isRefresh === false && isLevelRefresh === false && prevSelectedLevel === selectedLevel) {
-                console.log("no change in tree, option:" + prevOption + ":" + isRefresh + ":" + ":" + isLevelRefresh + ":" + selectedLevel);
+            if (prevCustomEvent === customEvent && currentLoadedTree === treeToProcess && prevOption === currentOption && isRefresh === false && isLevelRefresh === false && prevSelectedLevel === selectedLevel) {
+                console.log("no change in tree, option:" + (prevCustomEvent == customEvent) + ":" + prevOption + ":" + isRefresh + ":" + ":" + isLevelRefresh + ":" + selectedLevel);
                 end = performance.now();
                 console.debug("updateProfilerView 1 time:" + (end - start));
                 return;
+            }else{
+                console.log("change in tree, option:" + (prevCustomEvent == customEvent) + ":" + (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
             }
             currentLoadedTree = treeToProcess;
             prevOption = currentOption;
+            prevCustomEvent = customEvent;
             prevSelectedLevel = selectedLevel;
             isLevelRefresh = false;
 
@@ -260,6 +267,9 @@ In other words, data that's in the second set but not in the first will not be d
             }
             let end = performance.now();
             console.log("updateProfilerView 4 time:" + (end - start));
+        }
+        if(!isFilterOnType){
+            addTabNote(true,getContextHintNote(true,customEvent));
         }
     }
 </script>

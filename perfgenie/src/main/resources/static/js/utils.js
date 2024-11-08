@@ -5,10 +5,31 @@
  * For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
  */
 
-function getMetaDataURL(start,end,tenant='dev'){
-    const URL = "http://localhost:8080/v1/meta/"+tenant+
+function getMetaDataURL(start,end,tenant='dev', host, source){
+    let URL = "v1/meta/"+tenant+"/"+host+
         "/?start=" + start +
         "&end=" + end;
+    if(source == "genie"){
+        URL += "&metadata_query=" + encodeURIComponent("source=" + source);
+    }
+    return URL;
+}
+
+function getTenantDataURL(start,end,tenant='dev'){
+    let URL = "v1/tenants/"+tenant+
+        "/?start=" + start +
+        "&end=" + end;
+    return URL;
+}
+
+
+function getInstanceDataURL(start,end,tenant='dev', source){
+    let URL = "v1/instances/"+tenant+
+        "/?start=" + start +
+        "&end=" + end;
+    if(source == "genie"){
+        URL += "&metadata_query=" + encodeURIComponent("source=" + source);
+    }
     return URL;
 }
 
@@ -29,7 +50,7 @@ function toastr_error(str){
 }
 
 function getEventURL(tenant,start,end,host){
-    const URLUnprocessedIDsOld = "http://localhost:8080/v1/events/" +  tenant +
+    const URLUnprocessedIDsOld = "v1/events/" +  tenant +
         "?start=" + start +
         "&end=" + end +
         "&metadata_query=" + encodeURIComponent("host=" + host) +
@@ -37,11 +58,25 @@ function getEventURL(tenant,start,end,host){
         "&metadata_query=" + encodeURIComponent("name=jfr");
 }
 
+function updateTabUrl(tab){
+    let newLocation = window.location.href.replace(new RegExp("(#.*)"), tab);
+    if (newLocation.indexOf("#") === -1) {
+        newLocation = newLocation + tab;
+    }
+    window.history.replaceState({}, "", newLocation);
+}
 function updateUrl(key, value) {
-    let newLocation = window.location.href.replace(new RegExp("((\\?|\\&)" + key + "=)[^\\&]*"), '$1' + encodeURIComponent(value));
+    const myArray = window.location.href.split("#");
+    let newLocation = myArray[0];
+    newLocation = newLocation.replace(new RegExp("((\\?|\\&)" + key + "=)[^\\&]*"), '$1' + encodeURIComponent(value));
     if (newLocation.indexOf(key) === -1) {
+        const myArray = newLocation.split("#");
+        newLocation = myArray[0];
         const separator = (newLocation.indexOf("?") === -1) ? "?" : "&";
         newLocation = newLocation + separator + key + "=" + encodeURIComponent(value);
+    }
+    if(myArray[1] != undefined){
+        newLocation = newLocation + "#" + myArray[1];
     }
     window.history.replaceState({}, "", newLocation);
 }
@@ -50,8 +85,10 @@ function stackDigVizAjax(pod, method, endpoint, successFunc, errorFunc) {
     if (errorFunc === undefined) {
         errorFunc = defaultErrorFunc;
     }
-
-    const headers = {};
+    const headers = { 'x-envoy-upstream-rq-timeout-ms': 600001,
+        'x-envoy-max-retries': 1,
+        'x-envoy-upstream-rq-per-try-timeout-ms': 600000
+    };
     const errorFuncWithRetry = function () {
             return internalPerfGenieAjax(endpoint, method, successFunc, errorFunc, headers);
     };

@@ -119,6 +119,8 @@ public class CustomJfrParser {
     void processJfrEvents(final EventHandler handler, final IItemCollection events){
         final StringBuilder sb = new StringBuilder();
         final Map<String, List> header = new HashMap<>();
+        final Map<String, Integer> unique = new HashMap<>();
+        boolean errorOnce = true;
         for (IItemIterable iterable_element : events) {
             if (config.isProfile(iterable_element.getType().getIdentifier())) {
                 //Object[] r = iterable_element.get().toArray();
@@ -126,6 +128,7 @@ public class CustomJfrParser {
                 int tid = -1;
                 long epoc = -1;
                 int weight = 1;
+                boolean memoryEvent = false;
                 String classStr = null;
                 handler.initializeProfile(iterable_element.getType().getIdentifier());
                 handler.initializePid(iterable_element.getType().getIdentifier());
@@ -138,6 +141,7 @@ public class CustomJfrParser {
                         if(((Attribute) key).getName().equals("Allocation Size")){
                             ITypedQuantity<LinearUnit> v = (ITypedQuantity<LinearUnit>) iterable_element.getType().getAccessor((IAccessorKey) key).getMember(item);
                             weight = (int)v.longValue();
+                            memoryEvent = true;
                         }
                         if (((Attribute) key).getContentType().getIdentifier().equals("class")) {
                             classStr=((IMCType)iterable_element.getType().getAccessor((IAccessorKey) key).getMember(item)).getTypeName();
@@ -146,8 +150,21 @@ public class CustomJfrParser {
                             final IMCThread thread = (IMCThread) iterable_element.getType().getAccessor((IAccessorKey) key).getMember(item);
                             if(thread != null){
                                 tid = thread.getThreadId().intValue();
+                                if(tid == 0){//zing hack
+                                    if(!thread.getThreadName().contains("GC")) {
+                                        tid = thread.getThreadName().hashCode();
+                                        if (tid > 0) {
+                                            tid = 0 - tid; // set it to negitive to avoid clashing with other tids
+                                        }
+                                    }else{
+                                        tid = -100;
+                                    }
+                                }
                             }else{
-                                logger.warn("null pointer, mall formed thread " + item.toString());
+                                if(errorOnce) {
+                                    errorOnce=false;
+                                    logger.warn("null pointer, mall formed thread " + item.toString());
+                                }
                             }
 
                         } else if (((Attribute) key).getContentType().getIdentifier().equals("timestamp")) {
@@ -158,7 +175,11 @@ public class CustomJfrParser {
 
                     try {
                         if(stackTrace != null) {
-                            handler.processEvent(sb, stackTrace, iterable_element.getType().getIdentifier(), tid, epoc, weight, classStr);
+                            if(memoryEvent){//experiment to reduce size
+                                handler.processMemoryEvent(sb, stackTrace, iterable_element.getType().getIdentifier(), tid, epoc, weight, classStr);
+                            }else {
+                                handler.processEvent(sb, stackTrace, iterable_element.getType().getIdentifier(), tid, epoc, weight, classStr);
+                            }
                         }
                     }catch (Exception e){
                         throw e;
@@ -179,13 +200,31 @@ public class CustomJfrParser {
                     IUnit u = null;
                     List<Object> record = new ArrayList<>();
                     int tid = -1;
+                    boolean textFound = false;
                     for (Object key : k.keySet()) {
                         if (((Attribute) key).getContentType().getIdentifier().equals("thread")) {
                             final IMCThread thread = (IMCThread) iterable_element.getType().getAccessor((IAccessorKey) key).getMember(r[i]);
-                            tid = thread.getThreadId().intValue();
-                            tid = thread.getThreadId().intValue();
-                            record.add(thread.getThreadId());
-                            record.add(thread.getThreadName());
+                            if(thread != null) {
+                                tid = thread.getThreadId().intValue();
+                                if (tid == 0) {//zing hack
+                                    tid = thread.getThreadName().hashCode();
+                                    if (tid > 0) {
+                                        tid = 0 - tid; // set it to negitive to avoid clashing with other tids
+                                    }
+                                }
+                            }else{
+                                if(errorOnce) {
+                                    errorOnce=false;
+                                    logger.warn("null pointer, mall formed thread " + key.toString());
+                                }
+                            }
+                            record.add(tid);
+                            if(thread != null) {
+                                record.add(thread.getThreadName());
+                            }else{
+                                record.add("null");
+                            }
+                            textFound=true;
                             if (addHeader) {
                                 header.get(iterable_element.getType().getIdentifier()).add("tid:text");
                                 header.get(iterable_element.getType().getIdentifier()).add("threadname:text");
@@ -204,6 +243,7 @@ public class CustomJfrParser {
                                 header.get(iterable_element.getType().getIdentifier()).add("duration:number");
                             }
                         } else if (((Attribute) key).getContentType().getIdentifier().equals("text")) {
+                            textFound=true;
                             record.add(iterable_element.getType().getAccessor((IAccessorKey) key).getMember(r[i]));
                             if (addHeader) {
                                 header.get(iterable_element.getType().getIdentifier()).add(((Attribute) key).getIdentifier() + ":text");
@@ -213,8 +253,21 @@ public class CustomJfrParser {
                             if (addHeader) {
                                 header.get(iterable_element.getType().getIdentifier()).add(((Attribute) key).getIdentifier() + ":number");
                             }
+                        } else if (((Attribute) key).getContentType().getIdentifier().equals("percentage")) {
+                            record.add(((int)(((IQuantity) iterable_element.getType().getAccessor((IAccessorKey) key).getMember(r[i])).doubleValue()*10000))/100.0);
+                            if (addHeader) {
+                                header.get(iterable_element.getType().getIdentifier()).add(((Attribute) key).getIdentifier() + ":number");
+                            }
                         }
                     }
+
+                    if(!textFound){
+                        record.add(iterable_element.getType().getIdentifier());
+                        if (addHeader) {
+                            header.get(iterable_element.getType().getIdentifier()).add( iterable_element.getType().getIdentifier()+":text");
+                        }
+                    }
+
                     if (addHeader) {
                         handler.initializeEvent(iterable_element.getType().getIdentifier());
                         handler.addHeader(iterable_element.getType().getIdentifier(), header.get(iterable_element.getType().getIdentifier()));
@@ -223,204 +276,19 @@ public class CustomJfrParser {
                     handler.processContext(record, tid, iterable_element.getType().getIdentifier());
                 }
             }else{
-               // System.out.println("other:" + iterable_element.getType().getIdentifier());
+                if(!unique.containsKey(iterable_element.getType().getIdentifier())){
+                    unique.put(iterable_element.getType().getIdentifier(),1);
+                }else{
+                    unique.put(iterable_element.getType().getIdentifier(),unique.get(iterable_element.getType().getIdentifier()) + 1);
+                }
             }
         }
+        for (Map.Entry<String, Integer> entry : unique.entrySet()) {
+            //System.out.println(entry.getKey() + " : " + entry.getValue());
+        }
+
     }
 
 
-    public static class Config {
-        public List<String> getProfiles() {
-            return profiles;
-        }
 
-        public void setProfiles(List<String> profiles) {
-            this.profiles = profiles;
-        }
-
-        public List<String> getCustomevents() {
-            return customevents;
-        }
-
-        public void setCustomevents(List<String> customevents) {
-            this.customevents = customevents;
-        }
-
-        public String getJfrdir() {
-            return jfrdir;
-        }
-
-        String jfrdir = "/tmp/jfrs";
-
-        public String getTenant() {
-            return tenant;
-        }
-
-        String tenant = "dev";
-
-        public String getH2dir() {
-            return h2dir;
-        }
-
-        String h2dir = "/tmp/h2";
-
-        public String getStorageType() {
-            return storageType;
-        }
-
-        String mySQL_host="localhost";
-        int mySQL_port=3306;
-        String mySQL_user="root";
-
-
-        public double getThreshold() {
-            return threshold;
-        }
-
-        public int getFilterDepth() {
-            return filterDepth;
-        }
-
-        public int getMaxStackDepth() {
-            return maxStackDepth;
-        }
-
-        public int filterDepth = 4;
-        public int maxStackDepth = 128;
-        public double threshold = 0.05; //percentage
-
-        public boolean isExperimental() {
-            return isExperimental;
-        }
-
-        public boolean isExperimental = false;
-
-
-        public String getMySQL_host() {
-            return mySQL_host;
-        }
-
-        public int getMySQL_port() {
-            return mySQL_port;
-        }
-
-        public String getMySQL_user() {
-            return mySQL_user;
-        }
-
-        public String getMySQL_pwd() {
-            return mySQL_pwd;
-        }
-
-        String mySQL_pwd="xxxx";
-
-        public String getGrpc_target() {
-            return grpc_target;
-        }
-
-        String grpc_target = "localhost:7443";
-
-
-
-        String storageType = "h2";
-        List<String> profiles = new ArrayList<>(); //Arrays.asList("ExecutionS", "Socket");
-        List<String> customevents = new ArrayList<>(); //rrays.asList("LogContext", "MqFrm", "CPUEvent", "MemoryEvent");
-
-        public Config(){
-            try (InputStream config = CustomJfrParser.class.getClassLoader().getResourceAsStream("config.properties")) {
-                Properties prop = new Properties();
-                if (config == null) {
-                    logger.error("Error: unable to find config.properties, adding default entries");
-                    profiles.add("ExecutionS");
-                    profiles.add("Socket");
-                    customevents.add("MqFrm");
-                    customevents.add("LogContext");
-                    customevents.add("CPUEvent");
-                    customevents.add("MemoryEvent");
-                    logger.info(profiles.toString());
-                    logger.info(customevents.toString());
-                    return;
-                }
-                prop.load(config);
-                String [] ce = prop.getProperty("customevents").split(";");
-                for(int i = 0; i< ce.length; i++){
-                    customevents.add(ce[i]);
-                }
-
-                String [] pe = prop.getProperty("profiles").split(";");
-                for(int i = 0; i< pe.length; i++){
-                    profiles.add(pe[i]);
-                }
-                if(prop.getProperty("jfrdir") != null){
-                    jfrdir=prop.getProperty("jfrdir");
-                }
-                if(prop.getProperty("tenant") != null){
-                    tenant=prop.getProperty("tenant");
-                }
-                if(prop.getProperty("h2dir") != null){
-                    h2dir=prop.getProperty("h2dir");
-                }
-                if(prop.getProperty("storageType") != null){
-                    storageType=prop.getProperty("storageType");
-                }
-                if(prop.getProperty("mySQL.host") != null){
-                    mySQL_host=prop.getProperty("mySQL.host");
-                }
-                if(prop.getProperty("mySQL.port") != null){
-                    mySQL_port=Integer.parseInt(prop.getProperty("mySQL.port"));
-                }
-                if(prop.getProperty("mySQL.pwd") != null){
-                    mySQL_pwd=prop.getProperty("mySQL.pwd");
-                }
-                if(prop.getProperty("grpc.target") != null){
-                    grpc_target=prop.getProperty("grpc.target");
-                }
-                if(prop.getProperty("mySQL.user") != null){
-                    mySQL_user=prop.getProperty("mySQL.user");
-                }
-
-                if(prop.getProperty("threshold") != null){
-                    threshold=Double.parseDouble(prop.getProperty("threshold"));
-                }
-
-                if(prop.getProperty("filterDepth") != null){
-                    filterDepth=Integer.parseInt(prop.getProperty("filterDepth"));
-                }
-
-                if(prop.getProperty("maxStackDepth") != null){
-                    maxStackDepth=Integer.parseInt(prop.getProperty("maxStackDepth"));
-                }
-
-                if(prop.getProperty("isExperimental") != null){
-                    isExperimental= prop.getProperty("isExperimental").equals("true");
-                }
-
-                logger.info("profiles being parsed:" + profiles.toString());
-                logger.info("customevents being parsed:" + customevents.toString());
-                logger.info("dir monitored to parse jfr files:" + jfrdir);
-
-            } catch (IOException ex) {
-                logger.error("Exception: unable to find config.properties");
-                ex.printStackTrace();
-            }
-        }
-
-        public boolean isCustomEvent(String type) {
-            for (int i = 0; i < customevents.size(); i++) {
-                if (type.contains(customevents.get(i))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        public boolean isProfile(String type) {
-            for (int i = 0; i < profiles.size(); i++) {
-                if (type.contains(profiles.get(i))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
 }

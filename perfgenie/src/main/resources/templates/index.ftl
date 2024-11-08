@@ -36,6 +36,7 @@
     <script src="/js/input.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/SFlameGraph.js"></script>
+    <script src="/js/SFDataTable.js"></script>
     <link rel="stylesheet" href="/css/SFlameGraph.css">
 
     <link rel="stylesheet" type="text/css" href="/plugins/dataTables.jqueryui.min.css"/>
@@ -52,6 +53,9 @@
     <script src="/plugins/jquery.contextMenu.min.js"></script>
     <script src="/plugins/jquery.ui.position.js"></script>
     <link rel="stylesheet" href="/plugins/jquery.contextMenu.min.css">
+
+    <script type="text/javascript" src="/plugins/toastify/toastify.js"></script>
+    <link rel="stylesheet" href="/plugins/toastify/toastify.css">
 
     <link rel="stylesheet" href="/plugins/bootstrap-toggle.min.css">
     <script src="/plugins/bootstrap-toggle.min.js"></script>

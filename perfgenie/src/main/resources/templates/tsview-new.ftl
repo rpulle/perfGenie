@@ -6,48 +6,50 @@
 * For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 */
 </script>
-<div tabindex="-1" id="SampleprofileID" class='ui-widget' style="padding-left: 0px;">
+<div tabindex="-1" id="TSprofileID" class='ui-widget' style="padding-left: 0px;">
     <label>Profile: </label>
-    <select  style="height:30px;text-align: center;" class="filterinput" name="event-type-sample" id="event-type-sample">
+    <select  style="height:30px;text-align: center;" class="filterinput" name="event-type-tsview" id="event-type-tsview">
 
     </select>
     <label style='display:none'>Event: </label>
-    <select  style="height:30px;text-align: center;display:none" class="filterinput"  name="event-input-smpl" id="event-input-smpl">
+    <select  style="height:30px;text-align: center;display:none" class="filterinput"  name="event-input-tsview" id="event-input-tsview">
 
     </select>
 
     <label >Format: </label>
-    <select  style="height:30px;text-align: center;" class="filterinput"  name="sample-format-input" id="sample-format-input">
-        <option selected value=0>table</option>
+    <select  style="height:30px;text-align: center;" class="filterinput"  name="tsview-format-input" id="tsview-format-input">
         <option value=1>thread sample view</option>
     </select>
-
-
-        <label  title="group by tid will show all samples in a thread, others need a matching context">Group by: </label>
-        <select  style="height:30px;text-align: center;" class="filterinput"  name="smpl-grp-by" id="smpl-grp-by">
-        </select>
-    <span id="extraoptions">
-        <span title="Consider first N characters of group by option values">Len:</span><input  style="height:30px;width:35px;text-align: left;" class="filterinput" id="samples-groupby-length" type="text" value="">
-        <span title="Sub string match with group by option values">Match:</span><input  style="height:30px;width:120px;text-align: left;" class="filterinput" id="samples-groupby-match" type="text" value="">
+    <label title="group by tid will show all samples in a thread, others need a matching context">Group by: </label>
+    <select style="height:30px;text-align: center;" class="filterinput" name="tsview-grp-by" id="tsview-grp-by">
+    </select>
+    <span id="mcontention" class="hide">
+    <label>monitor-contention:</label>
+    <input type="checkbox" id="monitorCheck" onclick="handleMonitorCheck()">
+        <span id="tsviewNote"  style='color:darkorange'>
+        </span>
     </span>
 </div>
 
 <div class="row">
-<div style="padding: 0px !important;overflow: scroll"  id="sampletablecontext" class="ui-widget sampletable col-lg-12">
+<div style="padding: 0px !important;overflow: scroll"  id="tsviewtablecontext" class="ui-widget tsviewtable col-lg-12">
 </div>
 </div>
-
+<div class="row">
+    <div style="padding: 0px !important;overflow: scroll"  id="colorcodes" class="ui-widget colorcodes col-lg-12">
+    </div>
+</div>
 <div class="row">
     <div class="col-lg-7">
         <div style="overflow: auto; padding-left: 0px;padding-right: 2px; width: 100%;" class="cct-customized-scrollbar">
-            <div style="padding: 0px !important;"  id="sampletable" class="ui-widget sampletable col-lg-12">
+            <div style="padding: 0px !important;"  id="tsviewtable" class="ui-widget tsviewtable col-lg-12">
             </div>
         </div>
     </div>
-    <div style="padding-left: 0px !important;" id="quick-stack-view" class="col-lg-5">
-        <a id="detail-stack-view-link" target="_blank"></a>
-        <label id="stack-view-java-label-guid">Stack Trace</label>
-        <pre class="small" style="max-height: 900px; min-height: 900px; overflow-y: scroll;" id="stack-view-guid" >
+    <div style="padding-left: 0px !important;" id="quick-tsviewstack-view" class="col-lg-5">
+        <a id="detail-tsviewstack-view-link" target="_blank"></a>
+        <label id="stack-tsview-java-label-guid">Stack Trace</label>
+        <pre class="small" style="max-height: 900px; min-height: 900px; overflow-y: scroll;" id="stack-tsview-guid" >
             Click on a sample to see the Java stack here...
         </pre>
     </div>
@@ -60,76 +62,131 @@
 </style>
 
 <script>
-    let sampleTable = undefined;
-    let sampleTablePage = 0;
-    let stack_id = undefined;
-    let smplBy = '';
-    let samplesCustomEvent = '';
-    let samplesgroupByLength = '';
-    let samplesgroupByMatch = '';
-    function updateEventInputOptions(id){
+    let tsviewtableFormat = 1;
+    let tsviewtable = undefined;
+    let tsviewtablePage = 0;
+    let tsview_stack_id = undefined;
+    let tsviewBy = 'tid';
+    let tsviewCustomEvent = '';
+    let tsviewgroupByLength = '';
+    let tsviewgroupByMatch = '';
+    let monitorCheck = false;
+
+    function handleMonitorCheck() {
+        if(document.getElementById("monitorCheck").checked == true){
+            monitorCheck=true;
+        }else{
+            monitorCheck=false;
+        }
+
+        //get monitor context startTime1 +" - "+endTime1
+        let localContextData = getContextData(1);
+        let contextDataRecords = undefined;
+        if (localContextData != undefined && localContextData.records != undefined) {
+            contextDataRecords = localContextData.records["monitor-context"];
+        }
+        if(contextDataRecords != undefined) {
+            updateProfilerViewTsview(getSelectedLevel(getContextTree(1, getEventType())), true);
+        }else{
+            getMonitorContext(startTime1 +" - "+endTime1, tenant1, host1, "monitor", 1);
+        }
+    }
+
+    function resettsviewNote(msg) {
+        $("#tsviewNote").html(msg);
+    }
+    function getMonitorContext(timeRange, tenant, host, customEvent, count) {
+        const callTreeUrl = getEventUrl(timeRange, tenant, host, customEvent);
+        if(otherEventsMaxAjaxTris[callTreeUrl] == undefined){
+            otherEventsMaxAjaxTris[callTreeUrl] = 1;
+        }else{
+            otherEventsMaxAjaxTris[callTreeUrl]++;
+        }
+        if(otherEventsMaxAjaxTris[callTreeUrl] > 1){
+            console.log("getOtherEvent already fetched count:" + count);
+            return;
+        }
+        resettsviewNote("Fetching monitor context, this may take few minutes ...  <span style='float: right;' class='spinner' id='contentionspinner'></span>");
+        showSpinner('contentionspinner');
+        let toTenant = tenant;
+        if(isS3 == "true") {
+            toTenant = "";
+        }
+        let request = stackDigVizAjax(toTenant, "GET", callTreeUrl, function (response) { // success function
+            console.log("getOtherEvent done count:" + count);
+            if(response == undefined || response === "" || response.header == undefined) {
+                console.log("Warn: unable to fetch other event" + customEvent);
+                resettsviewNote("Failed to get monitor context.");
+            }else {
+                resettsviewNote("");
+                setOtherEventData(response, count);
+                updateProfilerViewTsview(getSelectedLevel(getContextTree(1, getEventType())), true);
+            }
+        }, function (error) {
+            resettsviewNote("Failed to get monitor context.");
+            console.log("Warn: unable to fetch monitor event " + customEvent);
+        });
+    }
+
+    function updateTsviewEventInputOptions(id){
         $('#'+id).empty();
 
         /*
         let localContextData = getContextData(1);
         if (localContextData != undefined && localContextData.records != undefined) {
-            let samplesCustomEventFound = false;
-            if(!(samplesCustomEvent == '' || samplesCustomEvent == undefined)) {
+            let tsviewCustomEventFound = false;
+            if(!(tsviewCustomEvent == '' || tsviewCustomEvent == undefined)) {
                 for (let value in localContextData.records) {
-                    if(samplesCustomEvent == value){
-                        samplesCustomEventFound = true;
+                    if(tsviewCustomEvent == value){
+                        tsviewCustomEventFound = true;
                         break;
                     }
                 }
             }
 
             for (let value in localContextData.records) {
-                if(samplesCustomEvent == '' || samplesCustomEvent == undefined || !samplesCustomEventFound){
-                    samplesCustomEvent = value;
-                    samplesCustomEventFound=true;
+                if(tsviewCustomEvent == '' || tsviewCustomEvent == undefined || !tsviewCustomEventFound){
+                    tsviewCustomEvent = value;
+                    tsviewCustomEventFound=true;
                 }
                 $('#'+id).append($('<option>', {
                     value: value,
                     text: value,
-                    selected: (samplesCustomEvent == value)
+                    selected: (tsviewCustomEvent == value)
                 }));
             }
         }*/
 
         //filters are not applied, so we should use only customEvent everywhere
         samplesCustomEvent = customEvent;
+        tsviewCustomEvent = customEvent;
         $('#'+id).append($('<option>', {
-            value: samplesCustomEvent,
-            text: samplesCustomEvent,
+            value: tsviewCustomEvent,
+            text: tsviewCustomEvent,
             selected: true
         }));
 
-        $("#samples-groupby-length").val(samplesgroupByLength);
-        $("#samples-groupby-match").val(samplesgroupByMatch);
+        $("#tsview-groupby-length").val(tsviewgroupByLength);
+        $("#tsview-groupby-match").val(tsviewgroupByMatch);
     }
 
-    function updateSampleFormatOptions(id){
+    function updateTsviewFormatOptions(id){
         $('#'+id).empty();
-        $('#' + id).append($('<option>', {
-            value: 0,
-            text: "table",
-            selected: (sampletableFormat == 0)
-        }));
         $('#' + id).append($('<option>', {
             value: 1,
             text: "thread sample view",
-            selected: (sampletableFormat == 1)
+            selected: (tsviewtableFormat == 1)
         }));
     }
 
-    function updateGroupByOptions(id){
+    function updateTsviewGroupByOptions(id){
         $('#'+id).empty();
         let localContextData = getContextData(1);
 
         if (localContextData != undefined && localContextData.header != undefined) {
             let groups = [];
-            for (let val in localContextData.header[samplesCustomEvent]) {
-                const tokens = localContextData.header[samplesCustomEvent][val].split(":");
+            for (let val in localContextData.header[tsviewCustomEvent]) {
+                const tokens = localContextData.header[tsviewCustomEvent][val].split(":");
                 if (tokens[1] == "text" || tokens[1] == "timestamp") {
                     groups.push(tokens[0]);
                 }
@@ -137,39 +194,29 @@
             groups.sort();
 
             let groupByFound = false;
-            if(!(smplBy == '' || smplBy == undefined)) {
-                for (let val in localContextData.header[samplesCustomEvent]) {
-                    const tokens = localContextData.header[samplesCustomEvent][val].split(":");
-                    if(smplBy == tokens[0]){
+            if(!(tsviewBy == '' || tsviewBy == undefined)) {
+                for (let val in localContextData.header[tsviewCustomEvent]) {
+                    const tokens = localContextData.header[tsviewCustomEvent][val].split(":");
+                    if(tsviewBy == tokens[0]){
                         groupByFound = true;
                         break;
                     }
                 }
             }
 
-            if(fContext == 'without'){//without context supported only for tid
+            if(fContext == 'without' || groups.length == 0){//without context supported only for tid
                 $('#' + id).append($('<option>', {
                     value: 'tid',
                     text: 'tid',
                     selected: true
                 }));
             }else {
-                if ((smplBy == '' || smplBy == undefined || !groupByFound)) {
-                    for (let i = 0; i < groups.length; i++) {
-                        if (groups[i] == "uri") {//SFDC default
-                            smplBy = groups[i];
-                            groupByFound = true;
-                            break;
-                        }
-                    }
-                }
-
                 for (let i = 0; i < groups.length; i++) {
-                    if ((smplBy == '' || smplBy == undefined || !groupByFound)) {
-                        smplBy = groups[i];
+                    if ((tsviewBy == '' || tsviewBy == undefined || !groupByFound)) {
+                        tsviewBy = groups[i];
                         groupByFound = true;
                     }
-                    if (smplBy == groups[i]) {
+                    if (tsviewBy == groups[i]) {
                         $('#' + id).append($('<option>', {
                             value: groups[i],
                             text: groups[i],
@@ -186,165 +233,168 @@
         }
     }
 
-    $("#smpl-grp-by").on("change", (event) => {
-        updateUrl("smplBy",$("#smpl-grp-by").val(),true);
-        smplBy = $("#smpl-grp-by").val();
-        genSampleTable(false, undefined);
+    $("#tsview-grp-by").on("change", (event) => {
+        updateUrl("tsviewBy",$("#tsview-grp-by").val(),true);
+        tsviewBy = $("#tsview-grp-by").val();
+        gentsviewtable(false, undefined);
     });
 
-    $("#event-input-smpl").on("change", (event) => {
-        updateUrl("scustomevent",$("#event-input-smpl").val(),true);
-        samplesCustomEvent = $("#event-input-smpl").val();
-        updateProfilerViewSample(getSelectedLevel(getContextTree(1,getEventType())),true);
+    $("#event-input-tsview").on("change", (event) => {
+        updateUrl("tsvcustomevent",$("#event-input-tsview").val(),true);
+        tsviewCustomEvent = $("#event-input-tsview").val();
+        updateProfilerViewTsview(getSelectedLevel(getContextTree(1,getEventType())),true);
     });
 
-    $("#sample-format-input").on("change", (event) => {
+    $("#tsview-format-input").on("change", (event) => {
 
-        updateUrl("sampletableFormat", $("#sample-format-input").val(), true);
-        sampletableFormat = $("#sample-format-input").val();
+        updateUrl("tsviewtableFormat", $("#tsview-format-input").val(), true);
+        tsviewtableFormat = $("#tsview-format-input").val();
 
-        if(sampletableFormat == 1 || sampletableFormat == 0) {
-            if($("#event-type-sample option[value='All']").length ==0)
+        if(tsviewtableFormat == 1 || tsviewtableFormat == 0) {
+            if($("#event-type-tsview option[value='All']").length ==0)
             {
-                $('#event-type-sample').append($('<option>', {
+                $('#event-type-tsview').append($('<option>', {
                     value: "All",
                     text: "All"
                 }));
             }
         }
 
-        updateProfilerViewSample(getSelectedLevel(getContextTree(1,getEventType())),true);
+        updateProfilerViewTsview(getSelectedLevel(getContextTree(1,getEventType())),true);
     });
 
-    $("#event-type-sample").on("change", (event) => {
-        if($("#event-type-sample").val() == "All"){
-            updateProfilerViewSample(getSelectedLevel(getContextTree(1,getEventType())),true);
+    $("#event-type-tsview").on("change", (event) => {
+        if($("#event-type-tsview").val() == "All"){
+            updateProfilerViewTsview(getSelectedLevel(getContextTree(1,getEventType())),true);
         }else {
-            handleEventTypeChange($("#event-type-sample").val());
+            handleEventTypeChange($("#event-type-tsview").val());
         }
     });
 
-    $("#samples-groupby-match").on("change", (event) => {
-        updateUrl("sgroupByMatch", $("#samples-groupby-match").val(), true);
-        samplesgroupByMatch = $("#samples-groupby-match").val();
-        updateProfilerViewSample(getSelectedLevel(getContextTree(1,getEventType())),true);
+    $("#tsview-groupby-match").on("change", (event) => {
+        updateUrl("tsvgroupByMatch", $("#tsview-groupby-match").val(), true);
+        tsviewgroupByMatch = $("#tsview-groupby-match").val();
+        updateProfilerViewTsview(getSelectedLevel(getContextTree(1,getEventType())),true);
     });
-    $("#samples-groupby-length").on("change", (event) => {
-        updateUrl("sgroupByLength", $("#samples-groupby-length").val(), true);
-        samplesgroupByLength = $("#samples-groupby-length").val();
-        updateProfilerViewSample(getSelectedLevel(getContextTree(1,getEventType())),true);
+    $("#tsview-groupby-length").on("change", (event) => {
+        updateUrl("tsvgroupByLength", $("#tsview-groupby-length").val(), true);
+        tsviewgroupByLength = $("#tsview-groupby-length").val();
+        updateProfilerViewTsview(getSelectedLevel(getContextTree(1,getEventType())),true);
     });
 
     $(document).ready(function () {
 
-        smplBy=urlParams.get('smplBy');// || 'tid';
-        sampleTablePage=urlParams.get('spage') || '0';
-        stack_id=urlParams.get('stack_id') || '';
-        samplesCustomEvent=urlParams.get('scustomevent') || '';
-        samplesgroupByMatch = urlParams.get('sgroupByMatch') || '';
-        samplesgroupByLength = urlParams.get('sgroupByLength') || '200';
+        tsviewBy=urlParams.get('tsviewBy') || 'tid';
+        tsviewtablePage=urlParams.get('spage') || '0';
+        tsview_stack_id=urlParams.get('tsview_stack_id') || '';
+        tsviewCustomEvent=urlParams.get('tsvcustomevent') || '';
+        tsviewgroupByMatch = urlParams.get('tsvgroupByMatch') || '';
+        tsviewgroupByLength = urlParams.get('tsvgroupByLength') || '200';
+        tsviewtableFormat = urlParams.get('tsviewtableFormat') || '1';
 
-        let filterType = smplBy;
+        let filterType = tsviewBy;
 
-        let str = "<table   style=\"width: 100%;\" id=\"sample-table\" class=\"table compact table-striped table-bordered  table-hover dataTable\"><thead><tr><th width=\"50%\">" + getHearderFor(filterType) + "</th><th width=\"10%\">Sample Count</th><th width=\"40%\">Samples</th></thead>";
-        str = str + "</table>";
-        document.getElementById("sampletable").innerHTML = str;
-        $('#sample-table').DataTable({
-            "order": [[1, "desc"]],
-            searching: false,
-            "columnDefs": [{
-                "targets": 0,
-                "orderable": false
-            }],
-            "sDom": '<"sampletoolbar">frtip'
-        });
+        let str = "";
+        document.getElementById("tsviewtable").innerHTML = str;
 
-        updateEventInputOptions('event-input-smpl');
+        updateTsviewEventInputOptions('event-input-tsview');
 
-        updateGroupByOptions('smpl-grp-by');
-        updateSampleFormatOptions('sample-format-input');
+        updateTsviewGroupByOptions('tsview-grp-by');
+        updateTsviewFormatOptions('tsview-format-input');
         //validateInputAndcreateContextTree(true);
     });
 
 
-    let eventTypeMaxThreadSamples={};
-    function prepSamplesData(eventType){
-        let profile = getContextTree(1, eventType);
-        if(profile.times != undefined){
-            end = performance.now();
-            console.log("prepData skip for:" + eventType);
-            return;//done only once
-        }
-        let tmpTimestampap = {};
-        let timestampArray = [];
-
-        let start = performance.now();
-
-        let tidMap = profile.context.tidMap;
-
-        //generate unique timestamp array
-        for (var k in tidMap) {
-            for (let i = 0; i < tidMap[k].length; i++) {
-                if(tmpTimestampap[tidMap[k][i].time] == undefined) {
-                    tmpTimestampap[tidMap[k][i].time] = true;
-                    timestampArray.push(tidMap[k][i].time);
-                }
-            }
-        }
-        timestampArray.sort(function (a, b) {
-            return a - b
-        });
-        let prev = timestampArray[0];
-        let count = 0;
-        for(let i = 0; i<timestampArray.length; i++){
-            if((timestampArray[i]-prev) > 60000){
-                tmpTimestampap[Math.round((timestampArray[i]+prev)/2)] = -1;
-                count++;
-            }
-            tmpTimestampap[timestampArray[i]] = i;
-            prev = timestampArray[i];
-            count++;
-        }
-        eventTypeMaxThreadSamples[eventType]=count;
-
-        profile.times = tmpTimestampap;
-        end = performance.now();
-        console.log("prepSamplesData time :" + (end - start));
-    }
-
-    function getSamplesTableHeader(groupBySamples, row, event) {
+    
+    function getTsviewTableHeader(groupByTsview, row, event) {
 
         let localContextData = getContextData(1);
         /*if(event === EventType.MEMORY) {
             totalSampleCount = totalSampleCount * 1024 * 1024;
-            if(groupBySamples == "tid") {
-                sfContextDataTable.addContextTableHeader(row,groupBySamples,1,"class='context-menu-two'");
+            if(groupByTsview == "tid") {
+                sfContextDataTable.addContextTableHeader(row,groupByTsview,1,"class='context-menu-two'");
             }else{
-                sfContextDataTable.addContextTableHeader(row,groupBySamples,-1,"class='context-menu-two'");
+                sfContextDataTable.addContextTableHeader(row,groupByTsview,-1,"class='context-menu-two'");
             }
             sfContextDataTable.addContextTableHeader(row,"Memory Mb",1);
             sfContextDataTable.addContextTableHeader(row,"Samples",1);
         }else{*/
-            if(groupBySamples == "tid") {
-                sfSampleTable.addContextTableHeader(row,groupBySamples,1,"class='context-menu-three'",localContextData.tooltips[groupBySamples]);
+            if(groupByTsview == "tid") {
+                sftsviewtable.addContextTableHeader(row,groupByTsview,1,"class='context-menu-three'",localContextData.tooltips[groupByTsview]);
             }else{
-                sfSampleTable.addContextTableHeader(row,groupBySamples,-1,"class='context-menu-two'",localContextData.tooltips[groupBySamples]);
+                sftsviewtable.addContextTableHeader(row,groupByTsview,-1,"class='context-menu-two'",localContextData.tooltips[groupByTsview]);
             }
-            sfSampleTable.addContextTableHeader(row,"Sample Count",1);
-            sfSampleTable.addContextTableHeader(row,"Samples",1);
+            sftsviewtable.addContextTableHeader(row,"Sample Count",1);
+            sftsviewtable.addContextTableHeader(row,"Samples",1);
         //}
     }
 
-    let sampleTableRows = [];
-    let sampleTableHeader = [];
-    let moreSamples = [];
+    let uniquecontentionTids = {};
+    let uniquecontentionLockTimeStamps = {};
+    let uniquecontentionLockTids = {};
+    function identifyLockWaitTids(){
+        let localContextData = getContextData(1);
+        let contextDataRecords = undefined;
+        if (localContextData != undefined && localContextData.records != undefined) {
+            contextDataRecords = localContextData.records["monitor-context"];
+        }
+        if(contextDataRecords != undefined) {
+            for (var tid in contextDataRecords) {
+                contextDataRecords[tid].forEach(function (obj) {
+                    let record = obj.record;
+                    if (uniquecontentionTids[record[1]] == undefined) {
+                        uniquecontentionTids[record[1]] = true;
+                    }
+                    if (uniquecontentionLockTids[record[1]] == undefined) {
+                        uniquecontentionLockTids[record[1]] = true;
+                        uniquecontentionLockTimeStamps[record[1]] = {};
+                    }
+                    if (uniquecontentionLockTimeStamps[record[1]][record[0]] == undefined) {
+                        uniquecontentionLockTimeStamps[record[1]][record[0]] = true;
+                    }
 
-    const sfSampleTable = new SFDataTable("sfSampleTable");
-    Object.freeze(sfSampleTable);
+                    let list = [];
+                    if(obj.record["8"] == "true"){
+                        let arr = obj.record["9"].split("\n\nDeadlock");
+                        list = eval(arr[0]);
+                    }else {
+                        list = eval(obj.record["9"]);
+                    }
+                    for (let i = 1; i < list.length; i = i + 2) {
+                        if (uniquecontentionTids[list[i]] == undefined) {
+                            uniquecontentionTids[list[i]] = true;
+                        }
+                    }
+                });
+            }
+        }
+    }
 
-    let sampleSortMap = undefined;
-    function genSampleTable(addContext, level) {
+    let tsviewtableRows = [];
+    let tsviewtableHeader = [];
+    let moreTsviews = [];
 
+    const sftsviewtable = new SFDataTable("sftsviewtable");
+    Object.freeze(sftsviewtable);
+
+    let tsviewSortMap = undefined;
+    function gentsviewtable(addContext, level) {
+        if($("#event-type-tsview").val() == "json-jstack") {//process all events
+            $('#mcontention').show();
+            if(document.getElementById("monitorCheck").checked == true){
+                monitorCheck=true;
+            }else{
+                monitorCheck=false;
+            }
+        }else{
+            monitorCheck=false;
+            $('#mcontention').hide();
+        }
+
+        identifyLockWaitTids();
+        if (tsviewtableFormat == 0) {
+            tsviewtableFormat = 1;
+        }
         let eventType = getEventType();
         let jfrprofilestart = 0;
 
@@ -374,37 +424,37 @@
         let tidRowIndex = -1;
 
         let sampleCountMap = new Map();
-        sampleSortMap = new Map();
+        tsviewSortMap = new Map();
 
-        $('#stack-view-guid').text("");
+        $('#stack-tsview-guid').text("");
         let start1 = performance.now();
-        let groupBySamples = smplBy;
-        sampleTableHeader = [];
-        sampleTableRows = [];
-        moreSamples = [];
+        let groupByTsview = tsviewBy;
+        tsviewtableHeader = [];
+        tsviewtableRows = [];
+        moreTsviews = [];
 
         if(fContext == 'without'){//context without supported only for tid, todo support thread name for jstacks
-            groupBySamples = 'tid';
+            groupByTsview = 'tid';
         }
-        getSamplesTableHeader(groupBySamples, sampleTableHeader, eventType);
+        getTsviewTableHeader(groupByTsview, tsviewtableHeader, eventType);
         let totalSampleCount = getContextTree(1, eventType).tree.sz;
         let samplerowIndex = -1;
 
         if(addContext) {
-            updateEventInputOptions('event-input-smpl');
-            updateGroupByOptions('smpl-grp-by');
-            updateSampleFormatOptions('sample-format-input');
+            updateTsviewEventInputOptions('event-input-tsview');
+            updateTsviewGroupByOptions('tsview-grp-by');
+            updateTsviewFormatOptions('tsview-format-input');
         }
 
         let isAll = (fContext === 'all' || fContext === '');
         let isWith = (fContext === 'with');
 
         let localContextData = getContextData(1);
-        //let table = "<table   style=\"width: 100%;\" id=\"sample-table\" class=\"table compact table-striped table-bordered  table-hover dataTable\"><thead><tr><th width=\"50%\">" + getHearderFor(groupBySamples) + "</th><th width=\"10%\">Sample Count</th><th width=\"40%\">Samples</th></thead>";
+        //let table = "<table   style=\"width: 100%;\" id=\"sample-table\" class=\"table compact table-striped table-bordered  table-hover dataTable\"><thead><tr><th width=\"50%\">" + getHearderFor(groupByTsview) + "</th><th width=\"10%\">Sample Count</th><th width=\"40%\">Samples</th></thead>";
         for (let tempeventTypeCount = 0; tempeventTypeCount< tempeventTypeArray.length; tempeventTypeCount++){
             let eventSampleCount = 0;
             let isJstack = false;
-            if($("#event-type-sample").val() == "All"){//process all events
+            if($("#event-type-tsview").val() == "All"){//process all events
                 eventType = tempeventTypeArray[tempeventTypeCount];
                 applyContextFilters(eventType,level);
                 addContext=true;
@@ -416,8 +466,8 @@
             }
 
 
-            for (let val in localContextData.header[samplesCustomEvent]) {
-                const tokens = localContextData.header[samplesCustomEvent][val].split(":");
+            for (let val in localContextData.header[tsviewCustomEvent]) {
+                const tokens = localContextData.header[tsviewCustomEvent][val].split(":");
                 if (tokens[1] == "number") {
                     metricsIndexArray.push(val);
                     metricsIndexMap[tokens[0]] = val;
@@ -439,9 +489,9 @@
             }
             if (localContextData == undefined) {
                 //support only tid or tn
-                if (!(groupBySamples === "threadname" || groupBySamples === "tid")) {
+                if (!(groupByTsview === "threadname" || groupByTsview === "tid")) {
                     //set default tid
-                    groupBySamples = "tid";
+                    groupByTsview = "tid";
                     if (eventType == "Jstack" || eventType == "json-jstack") {
                         updateFilterViewStatus("Note: Failed to get Request context, only tid and threadName group by options supported.");
                     } else {
@@ -451,7 +501,7 @@
             }
             let contextDataRecords = undefined;
             if (localContextData != undefined && localContextData.records != undefined) {
-                contextDataRecords = localContextData.records[samplesCustomEvent];
+                contextDataRecords = localContextData.records[tsviewCustomEvent];
             }
 
             let tidDatalistVal = filterMap["tid"];
@@ -467,8 +517,8 @@
                 isJstack=true;
             }
             //every sample of jstack has a tn
-            let combinedEventKey = eventType + samplesCustomEvent;
-            if ((eventType == "Jstack" || eventType == "json-jstack") && groupBySamples == "threadname" && isFilterEmpty(dimIndexMap)) {
+            let combinedEventKey = eventType + tsviewCustomEvent;
+            if ((eventType == "Jstack" || eventType == "json-jstack") && groupByTsview == "threadname" && isFilterEmpty(dimIndexMap)) {
                 //for (var tid in contextDataRecords) {
                 for (var tid in contextTidMap) {
                     if (tidDatalistVal == undefined || tidDatalistVal == tid) {
@@ -488,13 +538,13 @@
                                         }
                                         eventSampleCount++;
 
-                                        if (sampletableFormat == 0) {
+                                        if (tsviewtableFormat == 0) {
                                             let key = contextTidMap[tid][i].tn;
                                             //consider
-                                            if (sampleSortMap.has(key)) {
-                                                sampleSortMap.set(key, sampleSortMap.get(key) + 1);
+                                            if (tsviewSortMap.has(key)) {
+                                                tsviewSortMap.set(key, tsviewSortMap.get(key) + 1);
                                             } else {
-                                                sampleSortMap.set(key, 1);
+                                                tsviewSortMap.set(key, 1);
                                             }
 
                                             if (sampleCountMap.has(key)) {
@@ -517,9 +567,12 @@
                     }
                 }
                 //every sample will have a tid, so include all
-            } else if (groupBySamples == "tid" && isFilterEmpty()) {
+            } else if (groupByTsview == "tid" && isFilterEmpty()) {
                 //for (var tid in contextDataRecords) {
                 for (var tid in contextTidMap) {
+                    if(monitorCheck && uniquecontentionTids[tid] == undefined){
+                        continue;
+                    }
                     if (tidDatalistVal == undefined || tidDatalistVal == tid) {
                         for (let i = 0; i < contextTidMap[tid].length; i++) {
                             if ((pStart == '' || pEnd == '') || (contextTidMap[tid][i].time + contextStart) >= pStart && (contextTidMap[tid][i].time + contextStart) <= pEnd) {//apply time range filter
@@ -536,12 +589,12 @@
                                             tidSamplesTimestamps[tid].push([contextTidMap[tid][i].time, tempeventTypeCount, i, contextTidMap[tid][i][customEvent]?.obj[timestampIndex]]);
                                         }
                                         eventSampleCount++;
-                                        if (sampletableFormat == 0) {
+                                        if (tsviewtableFormat == 0) {
                                             let key = tid;
-                                            if (sampleSortMap.has(key)) {
-                                                sampleSortMap.set(key, sampleSortMap.get(key) + 1);
+                                            if (tsviewSortMap.has(key)) {
+                                                tsviewSortMap.set(key, tsviewSortMap.get(key) + 1);
                                             } else {
-                                                sampleSortMap.set(key, 1);
+                                                tsviewSortMap.set(key, 1);
                                             }
                                             if (sampleCountMap.has(key)) {
                                                 let tmpMap = sampleCountMap.get(key);
@@ -582,21 +635,21 @@
                                             tidSamplesTimestamps[tid].push([contextTidMap[tid][i].time, tempeventTypeCount, i, contextTidMap[tid][i][customEvent]?.obj[timestampIndex]]);
                                         }
                                         eventSampleCount++;
-                                        if (sampletableFormat == 0) {
+                                        if (tsviewtableFormat == 0) {
                                             let key = "";
-                                            if (contextTidMap[tid][i][samplesCustomEvent]?.obj != undefined) {
-                                                key = contextTidMap[tid][i][samplesCustomEvent].obj[dimIndexMap[groupBySamples]];
+                                            if (contextTidMap[tid][i][tsviewCustomEvent]?.obj != undefined) {
+                                                key = contextTidMap[tid][i][tsviewCustomEvent].obj[dimIndexMap[groupByTsview]];
                                             } else {
                                                 key = "stacks matched frame but no context match";
                                             }
                                             if (key != undefined && key.slice != undefined) {
-                                                key = key.slice(0, samplesgroupByLength);
+                                                key = key.slice(0, tsviewgroupByLength);
                                             }
                                             //consider
-                                            if (sampleSortMap.has(key)) {
-                                                sampleSortMap.set(key, sampleSortMap.get(key) + 1);
+                                            if (tsviewSortMap.has(key)) {
+                                                tsviewSortMap.set(key, tsviewSortMap.get(key) + 1);
                                             } else {
-                                                sampleSortMap.set(key, 1);
+                                                tsviewSortMap.set(key, 1);
                                             }
                                             if (sampleCountMap.has(key)) {
                                                 let tmpMap = sampleCountMap.get(key);
@@ -632,9 +685,9 @@
                                     if (filterMatch(record, dimIndexMap, timestampIndex, recordSpan)) {
                                         if (obj[combinedEventKey] != undefined) {
                                             flag = true;
-                                            let key = record[dimIndexMap[groupBySamples]];
+                                            let key = record[dimIndexMap[groupByTsview]];
                                             if (key != undefined && key.slice != undefined) {
-                                                key = key.slice(0, samplesgroupByLength);
+                                                key = key.slice(0, tsviewgroupByLength);
                                             }
                                             //check if request samples match frame filter string
                                             let cursampleCount = 0;
@@ -657,7 +710,7 @@
 
                                                             cursampleCount++;
 
-                                                            if (sampletableFormat == 0) {
+                                                            if (tsviewtableFormat == 0) {
                                                                 if (sampleCountMap.has(key)) {
                                                                     let tmpMap = sampleCountMap.get(key);
                                                                     if (tmpMap.has(stack)) {
@@ -675,12 +728,12 @@
                                                     }
                                                 }
                                             }
-                                            if (sampletableFormat == 0) {
+                                            if (tsviewtableFormat == 0) {
                                                 if (cursampleCount != 0) {
-                                                    if (sampleSortMap.has(key)) {
-                                                        sampleSortMap.set(key, sampleSortMap.get(key) + cursampleCount);
+                                                    if (tsviewSortMap.has(key)) {
+                                                        tsviewSortMap.set(key, tsviewSortMap.get(key) + cursampleCount);
                                                     } else {
-                                                        sampleSortMap.set(key, cursampleCount);
+                                                        tsviewSortMap.set(key, cursampleCount);
                                                     }
                                                 }
                                             }
@@ -707,12 +760,12 @@
                                                     tidSamplesTimestamps[tid].push([contextTidMap[tid][i].time, tempeventTypeCount, i, contextTidMap[tid][i][customEvent]?.obj[timestampIndex]]);
                                                 }
                                                 eventSampleCount++;
-                                                if (sampletableFormat == 0) {
+                                                if (tsviewtableFormat == 0) {
                                                     let key = tid;
-                                                    if (sampleSortMap.has(key)) {
-                                                        sampleSortMap.set(key, sampleSortMap.get(key) + 1);
+                                                    if (tsviewSortMap.has(key)) {
+                                                        tsviewSortMap.set(key, tsviewSortMap.get(key) + 1);
                                                     } else {
-                                                        sampleSortMap.set(key, 1);
+                                                        tsviewSortMap.set(key, 1);
                                                     }
                                                     if (sampleCountMap.has(key)) {
                                                         let tmpMap = sampleCountMap.get(key);
@@ -746,15 +799,15 @@
         }
 
         let start = performance.now();
-        $("#sampletablecontext").html("");
-        if (sampletableFormat == 1) {
+        $("#tsviewtablecontext").html("");
+        if (tsviewtableFormat == 1) {
             $('#extraoptions').hide();
-            $("#sampletablecontext").css({"height":''});
-            $('#stack-view-guid').text("");
-            $('#stack-view-java-label-guid').text("Stack Trace");
-            prevSampleReqCellObj = undefined;
-            prevSampleReqCellSid = undefined;
-            prevSampleReqCellTime = undefined;
+            $("#tsviewtablecontext").css({"height":''});
+            $('#stack-tsview-guid').text("");
+            $('#stack-tsview-java-label-guid').text("Stack Trace");
+            prevTsviewReqCellObj = undefined;
+            prevTsviewReqCellSid = undefined;
+            prevTsviewReqCellTime = undefined;
 
             let matchedTidCount = 0;
             let tidSamplesCountMap = new Map(); //sort tid based on number of samples
@@ -765,7 +818,7 @@
             }
             tidSamplesCountMap = new Map([...tidSamplesCountMap.entries()].sort((a, b) => b[1] - a[1]));
             let isJstack = false;
-            if((getEventType() == "Jstack" || getEventType() == "json-jstack") && $("#event-type-sample").val() != "All"){
+            if((getEventType() == "Jstack" || getEventType() == "json-jstack") && $("#event-type-tsview").val() != "All"){
                 isJstack = true;
             }
             let top = 75;
@@ -775,45 +828,68 @@
                 top = matchedTidCount + 15;
             }
             let uniquetimestamps = generateTimestamseries(tidSamplesTimestamps,tidSamplesCountMap, top);
-            $("#sampletable").html("");
+            $("#tsviewtable").html("");
 
-            //sampletable
+            //tsviewtable
             let cellh = 8;
             let cellw = 4;
             let x = 20;
             let y = 10;
 
-            if(isJstack){
+            if(isJstack) {
                 cellh = 8;
                 cellw = 8;
+                $("#colorcodes").html("");
+                d3.select("#colorcodes").append("svg").attr("width", 1000).attr("height", 25);
+                let colorcodesSvg = d3.select('#colorcodes').select("svg");
+                let tmpx = 15;
+                let tmpy = 10;
+                for (var state in jstackcolorsmap) {
+                    colorcodesSvg.append("rect")
+                        .attr("width", 10)
+                        .attr("height", 10)
+                        .attr("x", tmpx)
+                        .attr("y", tmpy)
+                        .attr("fill", getTsviewSampleColor(jstackcolorsmap[state]));
+                    colorcodesSvg.append("text")
+                        .text(state)
+                        .attr("x", tmpx + 11)
+                        .style("font-size", "10px")
+                        .attr("y", tmpy + 10);
+
+                    tmpx += (state.length * 8 + 20);
+                }
+            }else{
+                $("#colorcodes").html("");
             }
 
-            document.getElementById("sampletable").innerHTML = "<div class='row col-lg-12' style='padding: 0px !important;'>"
+
+            document.getElementById("tsviewtable").innerHTML = "<div class='row col-lg-12' style='padding: 0px !important;'>"
                 + "<div  style='width: 7%;float: left;'></div>"
                 + "<div style=\"max-height: 50px;overflow: hidden;width: 93%;float: right;\">"
                 + " <div class='row col-lg-12' style='padding: 0px !important;'>"
-                + "   <div class='xaxisidSamples col-lg-12' id='xaxisidSamples' style=\"padding: 0px !important; max-height: 50px;overflow: scroll;overflow-y: hidden;\" onscroll='OnScroll1Samples(this)'>"
+                + "   <div class='xaxisidTsview col-lg-12' id='xaxisidTsview' style=\"padding: 0px !important; max-height: 50px;overflow: scroll;overflow-y: hidden;\" onscroll='OnScroll1Samples(this)'>"
                 + "   </div>"
                 + " </div>"
                 + "</div>"
                 + "</div>"
                 + "<div class='row col-lg-12' style='padding: 0px !important;'>"
-                + " <div  id='yaxisidSamples' style=\"max-height: " + (top + 2) * cellh + "px;overflow: scroll;overflow-x: hidden;width: 7%;float: left;\" class='yaxisidSamples' onscroll='OnScroll0Samples(this)'></div>"
-                + " <div id='requestbarchartSampleswrapper' style=\"max-height: " + (top + 2) * cellh + "px;overflow: hidden;width: 93%;float: right;\">"
+                + " <div  id='yaxisidTsview' style=\"max-height: " + (top + 2) * cellh + "px;overflow: scroll;overflow-x: hidden;width: 7%;float: left;\" class='yaxisidTsview' onscroll='OnScroll0Samples(this)'></div>"
+                + " <div id='requestbarchartTsviewwrapper' style=\"max-height: " + (top + 2) * cellh + "px;overflow: hidden;width: 93%;float: right;\">"
                 + "    <div class='row col-lg-12' style='padding: 0px !important;'>"
-                + "      <div class='requestbarchartSamples col-lg-12' onscroll='OnScroll2Samples(this)' style=\"padding: 0px !important; height: " + (top + 2) * cellh + "px;max-height: " + (top + 2) * cellh + "px;overflow: auto;\" id='requestbarchartSamples'>"
+                + "      <div class='requestbarchartTsview col-lg-12' onscroll='OnScroll2Samples(this)' style=\"padding: 0px !important; height: " + (top + 2) * cellh + "px;max-height: " + (top + 2) * cellh + "px;overflow: auto;\" id='requestbarchartTsview'>"
                 + "      </div>"
                 + "    </div>"
                 + " </div>"
                 + "</div><div>Note: Top " + (top-15) + " threads sorted by number of samples</div>";
 
-            d3.select("#requestbarchartSamples").append("svg").attr("width", (maxThreadSamples *cellw)+37).attr("height", (top+2)*cellh);
-            d3.select("#yaxisidSamples").append("svg").attr("width", 50).attr("height", (top+2)*cellh);
-            d3.select("#xaxisidSamples").append("svg").attr("width",  (maxThreadSamples *cellw)+37).attr("height", 10);
+            d3.select("#requestbarchartTsview").append("svg").attr("width", (maxTsviewThreadSamples *cellw)+37).attr("height", (top+2)*cellh);
+            d3.select("#yaxisidTsview").append("svg").attr("width", 50).attr("height", (top+2)*cellh);
+            d3.select("#xaxisidTsview").append("svg").attr("width",  (maxTsviewThreadSamples *cellw)+37).attr("height", 10);
 
-            let d3yaxis = d3.select('#yaxisidSamples').select("svg");
-            let d3xaxis = d3.select('#xaxisidSamples').select("svg");
-            let d3svg = d3.select("#requestbarchartSamples").select("svg");
+            let d3yaxis = d3.select('#yaxisidTsview').select("svg");
+            let d3xaxis = d3.select('#xaxisidTsview').select("svg");
+            let d3svg = d3.select("#requestbarchartTsview").select("svg");
 
             let layer1 = d3svg.append('g');
             let layer2 = d3svg.append('g');
@@ -837,6 +913,7 @@
             for (let [tid, value] of tidSamplesCountMap) {
                 if (count < top) {
                     count++;
+
                     d3yaxis.append("text")
                         .text(tid)
                         .attr("x", 15)
@@ -848,7 +925,7 @@
                         .style('stroke', '#E2E2E2')
                         .attr('x1', x)
                         .attr('y1', y+cellh/2 )
-                        .attr('x2', maxThreadSamples*cellh)
+                        .attr('x2', maxTsviewThreadSamples*cellh)
                         .attr('y2', y+cellh/2);
 
                     let i = 0;
@@ -873,6 +950,7 @@
                                 //put color rect
                                 //handle duplicates
                                 if(timestamp == tidSamplesTimestamps[tid][i][0]) {
+
                                     layer2.append("rect")
                                         .attr("width", cellw)
                                         .attr("height", cellh)
@@ -882,8 +960,22 @@
                                         .attr("t", tid)
                                         .attr("in", tidSamplesTimestamps[tid][i][2])
                                         .attr("class", " tgl")
-                                        .attr("onclick", 'showSVGSampleStack(evt)')
-                                        .attr("fill", getSampleColor(tidSamplesTimestamps[tid][i][1]));
+                                        .attr("onclick", 'showSVGTsviewStack(evt)')
+                                        .attr("fill", getTsviewSampleColor(tidSamplesTimestamps[tid][i][1]));
+
+                                    if(monitorCheck && uniquecontentionLockTids[tid] != undefined && uniquecontentionLockTimeStamps[tid][tidSamplesTimestamps[tid][i][0]] != undefined){
+                                        layer2.append("rect")
+                                            .attr("width", cellw-5)
+                                            .attr("height", cellh-5)
+                                            .attr("x", x+2.5)
+                                            .attr("y", y+2.5)
+                                            .attr("e", tidSamplesTimestamps[tid][i][1])
+                                            .attr("t", tid)
+                                            .attr("in", tidSamplesTimestamps[tid][i][2])
+                                            .attr("class", " tgl")
+                                            .attr("onclick", 'showSVGTsviewStack(evt)')
+                                            .attr("fill", "white");
+                                    }
 
                                     if(prevx == -1){
                                         if (tidSamplesTimestamps[tid][i][3] != undefined) {
@@ -948,29 +1040,29 @@
             if(y > 700){
                 y = 700;
             }
-            $("#yaxisidSamples").css({"max-height":y});
-            $("#requestbarchartSampleswrapper").css({"max-height":y+30});
-            $("#requestbarchartSamples").css({"max-height":y+30});
+            $("#yaxisidTsview").css({"max-height":y});
+            $("#requestbarchartTsviewwrapper").css({"max-height":y+30});
+            $("#requestbarchartTsview").css({"max-height":y+30});
         } else {
             $('#extraoptions').show();
-            $("#sampletablecontext").css({"height":''});
+            $("#tsviewtablecontext").css({"height":''});
             //sort based on number of stacks
             for (let [key, value] of sampleCountMap) {
                 sampleCountMap.set(key, new Map([...value.entries()].sort((a, b) => b[1] - a[1])));
             }
 
-            sampleSortMap = new Map([...sampleSortMap.entries()].sort((a, b) => b[1] - a[1]));
+            tsviewSortMap = new Map([...tsviewSortMap.entries()].sort((a, b) => b[1] - a[1]));
 
 
             let end1 = performance.now();
-            console.log("genSampleTable 0 time:" + (end1 - start1))
+            console.log("gentsviewtable 0 time:" + (end1 - start1))
 
             let order = 1;
 
-            moreSamples = {};
-            for (let [key, value] of sampleSortMap) {
+            moreTsviews = {};
+            for (let [key, value] of tsviewSortMap) {
 
-                if ((samplesgroupByMatch != '' && key.includes != undefined && !key.includes(samplesgroupByMatch))) {
+                if ((tsviewgroupByMatch != '' && key.includes != undefined && !key.includes(tsviewgroupByMatch))) {
                     continue;
                 }
 
@@ -987,11 +1079,11 @@
                         if (order == 0) {
                             order = value1;
                         }
-                        str = str + "<div style=\" cursor: pointer;\" data-ga-category=\"samples-table\" data-ga-action=\"show-stack\" id=\"+ key1 + \" class=\"send-ga stack-badge badge badge-secondary  stack" + key1 + "\" onclick=\"showSampleStack('" + key1 + "');\">" + (100 * value1 / value).toFixed(2) + "%, " + value1 + "</div> &nbsp;";
+                        str = str + "<div style=\" cursor: pointer;\" data-ga-category=\"samples-table\" data-ga-action=\"show-stack\" id=\"+ key1 + \" class=\"send-ga stack-badge badge badge-secondary  stack" + key1 + "\" onclick=\"showTsviewSampleStack('" + key1 + "');\">" + (100 * value1 / value).toFixed(2) + "%, " + value1 + "</div> &nbsp;";
                     } else {
                         if (morec < 25) {
                             morec++;
-                            more = more + "<div style=\"display: none; cursor: pointer; \"   class=\"stack-badge badge badge-secondary  stack" + key1 + " hidden-stacks-" + hashCode(key) + "\" onclick=\"showSampleStack('" + key1 + "');\">" + (100 * value1 / value).toFixed(2) + "%, " + value1 + "</div>&nbsp;";
+                            more = more + "<div style=\"display: none; cursor: pointer; \"   class=\"stack-badge badge badge-secondary  stack" + key1 + " hidden-stacks-" + hashCode(key) + "\" onclick=\"showTsviewSampleStack('" + key1 + "');\">" + (100 * value1 / value).toFixed(2) + "%, " + value1 + "</div>&nbsp;";
                         } else {
                             skipc++;
                         }
@@ -999,66 +1091,66 @@
                     count++;
                 }
                 if (morec != 0) {
-                    moreSamples[key] = more;
-                    str += '<div style="cursor: pointer;" class="badge badge-primary more-stacks-' + hashCode(key) + '" onclick="showHiddenStacks(\'' + hashCode(key) + '\');"> +' + (morec + skipc) + ' more</div>';
-                    str += '<div style="cursor: pointer; display: none;" class="badge badge-primary less-stacks-' + hashCode(key) + '" onclick="hideHiddenStacks(\'' + hashCode(key) + '\');"> << </div> ';
+                    moreTsviews[key] = more;
+                    str += '<div style="cursor: pointer;" class="badge badge-primary more-stacks-' + hashCode(key) + '" onclick="showTsviewHiddenStacks(\'' + hashCode(key) + '\');"> +' + (morec + skipc) + ' more</div>';
+                    str += '<div style="cursor: pointer; display: none;" class="badge badge-primary less-stacks-' + hashCode(key) + '" onclick="hideTsviewHiddenStacks(\'' + hashCode(key) + '\');"> << </div> ';
                     str += more;
-                    str += '<div style="cursor: pointer; display: none;" class="badge badge-primary less-stacks-' + hashCode(key) + '" onclick="hideHiddenStacks(\'' + hashCode(key) + '\');"> -' + morec + ' less</div> ';
+                    str += '<div style="cursor: pointer; display: none;" class="badge badge-primary less-stacks-' + hashCode(key) + '" onclick="hideTsviewHiddenStacks(\'' + hashCode(key) + '\');"> -' + morec + ' less</div> ';
                     if (skipc != 0) {
                         str += "<div style=\"display: none;\"   class=\"stack-badge badge " + " hidden-stacks-" + hashCode(key) + "\"\">" + skipc + " more</div>";
                     }
                 }
-                sampleTableRows[samplerowIndex] = [];
+                tsviewtableRows[samplerowIndex] = [];
                 /*if(eventType == EventType.MEMORY) {
-                    addContextTableRow(sampleTableRows[samplerowIndex], ("<label style=\"word-wrap: break-word; width: 300px\" >" + (key == undefined ? "NA" : key) + "</label>"), "hint='"+groupBySamples+"'");
-                    addContextTableOrderRow(sampleTableRows[samplerowIndex], ("<b>" + (value / (1024 * 1024)).toFixed(3) + "</b>&nbsp;<div class=\"badge badge-info\"> " + (100 * value / totalSampleCount).toFixed(3) + "</div>"), value);
-                    addContextTableOrderRow(sampleTableRows[samplerowIndex], str, order);
+                    addContextTableRow(tsviewtableRows[samplerowIndex], ("<label style=\"word-wrap: break-word; width: 300px\" >" + (key == undefined ? "NA" : key) + "</label>"), "hint='"+groupByTsview+"'");
+                    addContextTableOrderRow(tsviewtableRows[samplerowIndex], ("<b>" + (value / (1024 * 1024)).toFixed(3) + "</b>&nbsp;<div class=\"badge badge-info\"> " + (100 * value / totalSampleCount).toFixed(3) + "</div>"), value);
+                    addContextTableOrderRow(tsviewtableRows[samplerowIndex], str, order);
                 }else{*/
 
                 //"id='"+Number(dim) + "_dummy'"
-                if (groupBySamples == "tid") {
-                    sfSampleTable.addContextTableRow(sampleTableRows[samplerowIndex], ("<div style=\"cursor: pointer; word-wrap: break-word;\" >" + (key == undefined ? "NA" : key) + "</div>"), "id='" + key + "_dummy'" + " hint='" + groupBySamples + "'");
+                if (groupByTsview == "tid") {
+                    sftsviewtable.addContextTableRow(tsviewtableRows[samplerowIndex], ("<div style=\"cursor: pointer; word-wrap: break-word;\" >" + (key == undefined ? "NA" : key) + "</div>"), "id='" + key + "_dummy'" + " hint='" + groupByTsview + "'");
                 } else {
-                    sfSampleTable.addContextTableRow(sampleTableRows[samplerowIndex], ("<div style=\"cursor: pointer; word-wrap: break-word;\" >" + (key == undefined ? "NA" : key) + "</div>"), "hint='" + groupBySamples + "'");
+                    sftsviewtable.addContextTableRow(tsviewtableRows[samplerowIndex], ("<div style=\"cursor: pointer; word-wrap: break-word;\" >" + (key == undefined ? "NA" : key) + "</div>"), "hint='" + groupByTsview + "'");
                 }
-                sfSampleTable.addContextTableOrderRow(sampleTableRows[samplerowIndex], ("<div class=\"badge badge-info\"><span style='font-size: 12px; color:black'>" + value + "</span> " + (100 * value / totalSampleCount).toFixed(3) + "%</div>"), value);
-                sfSampleTable.addContextTableOrderRow(sampleTableRows[samplerowIndex], str, order);
+                sftsviewtable.addContextTableOrderRow(tsviewtableRows[samplerowIndex], ("<div class=\"badge badge-info\"><span style='font-size: 12px; color:black'>" + value + "</span> " + (100 * value / totalSampleCount).toFixed(3) + "%</div>"), value);
+                sftsviewtable.addContextTableOrderRow(tsviewtableRows[samplerowIndex], str, order);
 
                 // }
-                //table = table + "<tr><td  hint=" + groupBySamples + " class=\"context-menu-two\"><label style=\"word-wrap: break-word; width: 300px\" >" + (key == undefined ? "NA" : key) + "</label></td><td data-order="+value+"><b>" +value+"</b>&nbsp;<div class=\"badge badge-info\"> "+ (100*value/totalSampleCount).toFixed(3) + "</div></td><td data-order="+order+">" + str + "</td></tr>";
+                //table = table + "<tr><td  hint=" + groupByTsview + " class=\"context-menu-two\"><label style=\"word-wrap: break-word; width: 300px\" >" + (key == undefined ? "NA" : key) + "</label></td><td data-order="+value+"><b>" +value+"</b>&nbsp;<div class=\"badge badge-info\"> "+ (100*value/totalSampleCount).toFixed(3) + "</div></td><td data-order="+order+">" + str + "</td></tr>";
             }
 
-            sfSampleTable.SFDataTable(sampleTableRows, sampleTableHeader, "sampletable", order);
+            sftsviewtable.SFDataTable(tsviewtableRows, tsviewtableHeader, "tsviewtable", order);
 
         }
 
         if(addContext) {
-            updateEventInputOptions('event-input-smpl');
-            updateGroupByOptions('smpl-grp-by');
-            updateSampleFormatOptions('sample-format-input');
+            updateTsviewEventInputOptions('event-input-tsview');
+            updateTsviewGroupByOptions('tsview-grp-by');
+            updateTsviewFormatOptions('tsview-format-input');
 
-            if(stack_id != '' && sampletableFormat == 0){
-                showSampleStack(stack_id);
+            if(tsview_stack_id != '' && tsviewtableFormat == 0){
+                showTsviewSampleStack(tsview_stack_id);
             }
         }
 
         let end = performance.now();
-        console.log("genSampleTable 1 time:" + (end - start) )
+        console.log("gentsviewtable 1 time:" + (end - start) )
     }
 
     function OnScroll0Samples(div) {
-        var d2 = document.getElementById("requestbarchartSamples");
+        var d2 = document.getElementById("requestbarchartTsview");
         d2.scrollTop = div.scrollTop;
     }
 
     function OnScroll1Samples(div) {
-        var d2 = document.getElementById("requestbarchartSamples");
+        var d2 = document.getElementById("requestbarchartTsview");
         d2.scrollLeft = div.scrollLeft;
     }
 
     function OnScroll2Samples(div) {
-        var d1 = document.getElementById("xaxisidSamples");
-        var d0 = document.getElementById("yaxisidSamples");
+        var d1 = document.getElementById("xaxisidTsview");
+        var d0 = document.getElementById("yaxisidTsview");
         d0.scrollTop = div.scrollTop;
         d1.scrollLeft = div.scrollLeft;
     }
@@ -1094,34 +1186,37 @@
         }
     }
 
-    let prevSampleReqCellObj = undefined;
-    let prevSampleReqCellSid = undefined;
-    let prevSampleReqCellTime = undefined;
-    const sfSamplecontextTable = new SFDataTable("sampletablecontext");
-    Object.freeze(sfSamplecontextTable);
+    let prevTsviewReqCellObj = undefined;
+    let prevTsviewReqCellSid = undefined;
+    let prevTsviewReqCellTime = undefined;
+    const sfTsviewcontextTable = new SFDataTable("tsviewtablecontext");
+    Object.freeze(sfTsviewcontextTable);
 
-    function showSampleContextTable(record, event) {
+    function showTsviewContextTable(record, event) {
         let rowIndex = 0;
-        sampleTableHeader = [];
-        sampleTableRows = [];
-        getContextTableHeadernew("", sampleTableHeader, customEvent, false);
-        sampleTableRows[rowIndex] = [];
+        tsviewtableHeader = [];
+        tsviewtableRows = [];
+        if(customEvent == undefined || customEvent == ""){
+            return; //no context available for this.
+        }
+        getContextTableHeadernew("", tsviewtableHeader, customEvent, false);
+        tsviewtableRows[rowIndex] = [];
         if(record.length == 0){
-            sfSamplecontextTable.addContextTableRow(sampleTableRows[rowIndex], "no context available");
+            sfTsviewcontextTable.addContextTableRow(tsviewtableRows[rowIndex], "no context available");
         }else {
             for (let field in record) {
                 if (field == 1) {
-                    sfSamplecontextTable.addContextTableRow(sampleTableRows[rowIndex], moment.utc(record[field]).format('YYYY-MM-DD HH:mm:ss SSS'));
+                    sfTsviewcontextTable.addContextTableRow(tsviewtableRows[rowIndex], moment.utc(record[field]).format('YYYY-MM-DD HH:mm:ss SSS'));
                 } else {
-                    sfSamplecontextTable.addContextTableRow(sampleTableRows[rowIndex], record[field]);
+                    sfTsviewcontextTable.addContextTableRow(tsviewtableRows[rowIndex], record[field]);
                 }
             }
         }
-        sfSamplecontextTable.SFDataTable(sampleTableRows, sampleTableHeader, "sampletablecontext", undefined, false);
+        sfTsviewcontextTable.SFDataTable(tsviewtableRows, tsviewtableHeader, "tsviewtablecontext", undefined, false);
     }
 
-    function showSVGSampleStack(obj) {
-        document.getElementById('SampleprofileID').focus();
+    function showSVGTsviewStack(obj) {
+        document.getElementById('TSprofileID').focus();
         let tempeventTypeArray = [];
         let jevent = "json-jstack";
         for (var tempeventType in jfrprofiles1) {//for all profile event types
@@ -1143,37 +1238,99 @@
         let index = obj.target.getAttribute("in");
 
         if(contextTree1[eventType].context.tidMap[pid][index][customEvent] != undefined && contextTree1[eventType].context.tidMap[pid][index][customEvent].obj != undefined){
-            showSampleContextTable(contextTree1[eventType].context.tidMap[pid][index][customEvent].obj, eventType);
+            showTsviewContextTable(contextTree1[eventType].context.tidMap[pid][index][customEvent].obj, eventType);
         }else{
-            if($("#sampletablecontext").height() != 0) {
-                $("#sampletablecontext").css("height", $("#sampletablecontext").height());
+            if($("#tsviewtablecontext").height() != 0) {
+                $("#tsviewtablecontext").css("height", $("#tsviewtablecontext").height());
             }
-            showSampleContextTable([], eventType);
+            showTsviewContextTable([], eventType);
         }
 
         let stackid = contextTree1[eventType].context.tidMap[pid][index].hash;
 
-        if(prevSampleReqCellObj != undefined) {
-            prevSampleReqCellObj.classList.remove('stackCells');
+        if(prevTsviewReqCellObj != undefined) {
+            prevTsviewReqCellObj.classList.remove('stackCells');
         }
-        prevSampleReqCellObj = obj.target;
-        prevSampleReqCellSid = stackid;
-        prevSampleReqCellTime = contextTree1[eventType].context.tidMap[pid][index].time + contextTree1[eventType].context.start;
-        prevSampleReqCellObj.classList.add('stackCells');
+        prevTsviewReqCellObj = obj.target;
+        prevTsviewReqCellSid = stackid;
+        prevTsviewReqCellTime = contextTree1[eventType].context.tidMap[pid][index].time + contextTree1[eventType].context.start;
+        prevTsviewReqCellObj.classList.add('stackCells');
 
-        updateUrl("stack_id",stackid,true);
-        stack_id=stackid;
-        $('#stack-view-java-label-guid').text("Stack Trace at " + moment.utc(prevSampleReqCellTime).format('YYYY-MM-DD HH:mm:ss.SSS'));
-        $('#stack-view-guid').text(getStackTrace(stackid, eventType,obj.target.getAttribute("e"), prevSampleReqCellTime));
+        updateUrl("tsview_stack_id",stackid,true);
+        tsview_stack_id=stackid;
+        if(contextTree1[eventType].context.tidMap[pid][index].tn != undefined){
+            $('#stack-tsview-java-label-guid').text("Stack Trace at " + moment.utc(prevTsviewReqCellTime).format('YYYY-MM-DD HH:mm:ss.SSS') + " tid:" + pid +" tn:" + contextTree1[eventType].context.tidMap[pid][index].tn);
+        }else {
+            $('#stack-tsview-java-label-guid').text("Stack Trace at " + moment.utc(prevTsviewReqCellTime).format('YYYY-MM-DD HH:mm:ss.SSS'));
+        }
+        let blockedStack = "";
+        if(jstackidcolorsmap[obj.target.getAttribute("e")] == "BLOCKED"){
+            blockedStack = getBlockedThreadStack(prevTsviewReqCellTime,eventType, pid);
+        }
+        $('#stack-tsview-guid').text(getStackTrace(stackid, eventType,obj.target.getAttribute("e"), prevTsviewReqCellTime) +"\n\n" + blockedStack);
     }
 
-    function getSampleColor(id){
+    function getBlockedThreadStack(timestamp, eventType, waittid){
+        let localContextData = getContextData(1);
+        let contextDataRecords = undefined;
+        if (localContextData != undefined && localContextData.records != undefined) {
+            contextDataRecords = localContextData.records["monitor-context"];
+        }
+        let blockedTid = "";
+        let lockContext = "";
+        if(contextDataRecords != undefined) {
+            for (var tid in contextDataRecords) {
+                let found = false;
+                //contextDataRecords[tid].forEach(function (obj) {
+                for(let i =0;i<contextDataRecords[tid].length; i++) {
+                    let record = contextDataRecords[tid][i].record;
+                    //TODO need to fix for prod already parsed jstacks, timestamp is not matching
+                    let diff = Math.abs(timestamp - record["0"]);
+                    if (record["0"] == timestamp || diff < 5000) { //5 sec diff
+                        let list = [];
+                        if (record["8"] == "true") {
+                            let arr = record["9"].split("\n\nDeadlock");
+                            list = eval(arr[0]);
+                        } else {
+                            list = eval(record["9"]);
+                        }
+                        for (let i = 1; i < list.length; i = i + 2) {
+                            if (waittid == list[i]) {
+                                blockedTid = tid;//todo break this loop
+                                found=true;
+                                lockContext = lockContext + "lock:" + record["3"] + " object:"+record["4"] + "\nframe got lock:"+record["5"];
+                                break;
+                            }
+                        }
+                    }
+                }
+                if(found){
+                    break;
+                }
+                //});
+            }
+            let stackTrace = "";
+            if(blockedTid != "") {
+                let contextArr = contextTree1[eventType].context.tidMap[blockedTid];
+                for (let i = 0; i < contextArr.length; i++) {
+                    if (contextArr[i].time + contextTree1[eventType].context.start == timestamp) {
+                        stackTrace = "Blocked by tid: " + blockedTid + " tn: " + contextArr[i].tn + "\n" + lockContext + "\n\n" + getStackTrace(contextArr[i].hash, eventType, jstackcolorsmap[contextArr[i].ts], timestamp);
+                        break;
+                    }
+                }
+            }
+            return stackTrace;
+        }
+        return "monitor-context not available to show locked thread";
+    }
+
+    function getTsviewSampleColor(id){
         return profilecolors[id];
     }
 
-    let maxThreadSamples=0;
-    let minThreadSamplesTimeStamp = 0;
-    let maxThreadSamplesTimeStamp = 0;
+    let maxTsviewThreadSamples=0;
+    let minTsviewThreadSamplesTimeStamp = 0;
+    let maxTsviewThreadSamplesTimeStamp = 0;
     function generateTimestamseries(tidSamplesTimestamps,tidSamplesCountMap, top){
 
         let tmpTimestampap = new Map();
@@ -1210,28 +1367,28 @@
         }
         let end = performance.now();
         console.log("generateTimestamseries time :" + (end - start));
-        maxThreadSamples = count;
-        minThreadSamplesTimeStamp = timestampArray[0];
-        maxThreadSamplesTimeStamp = timestampArray[timestampArray.length-1];
+        maxTsviewThreadSamples = count;
+        minTsviewThreadSamplesTimeStamp = timestampArray[0];
+        maxTsviewThreadSamplesTimeStamp = timestampArray[timestampArray.length-1];
         console.log("unique timestamps length:" + timestampArray.length);
         tmpTimestampap = new Map([...tmpTimestampap.entries()].sort((a, b) => a[0] - b[0]));
         return tmpTimestampap;
     }
 
 
-    function showHiddenStacks(guid) {
+    function showTsviewHiddenStacks(guid) {
         $(".more-stacks-" + guid).css("display", "none");
         $(".less-stacks-" + guid).css("display", "");
         $(".hidden-stacks-" + guid).css("display", "");
     }
 
-    function hideHiddenStacks(guid) {
+    function hideTsviewHiddenStacks(guid) {
         $(".more-stacks-" + guid).css("display", "");
         $(".less-stacks-" + guid).css("display", "none");
         $(".hidden-stacks-" + guid).css("display", "none");
     }
 
-    function getEventOfStackID(id){
+    function getTsviewEventOfStackID(id){
         for (var profile in jfrprofiles1) {
             let tree = getContextTree(1,profile);
             if(tree != undefined && tree.tree != undefined && tree.tree.sm[id] != undefined){
@@ -1241,17 +1398,17 @@
         return getEventType();//default
     }
 
-    function showSampleStack(stackid) {
-        updateUrl("stack_id",stackid,true);
-        stack_id=stackid;
-        $('#stack-view-guid').text(getStackTrace(stackid,getEventOfStackID(stackid)));
+    function showTsviewSampleStack(stackid) {
+        updateUrl("tsview_stack_id",stackid,true);
+        tsview_stack_id=stackid;
+        $('#stack-tsview-guid').text(getStackTrace(stackid,getTsviewEventOfStackID(stackid)));
         $('.stack-badge').removeClass("badge-warning");
         $(".stack"+stackid).addClass("badge-warning");
     }
 
     //create html tree recursively
-    let prevSampleProfile = undefined;
-    function updateProfilerViewSample(level, skipFilter) {
+    let prevTsviewSampleProfile = undefined;
+    function updateProfilerViewTsview(level, skipFilter) {
         addTabNote(false,"");
         let eventType = getEventType();
 
@@ -1262,13 +1419,13 @@
             }else{
                 addTabNote(true,"Context data not available to show this view");
             }
-            console.log("updateProfilerViewSample skip:" + level);
+            console.log("updateProfilerViewTsview skip:" + level);
             return false;
         }
 
-        updateEventInputOptions('event-input-smpl');
-        updateGroupByOptions('smpl-grp-by');
-        updateSampleFormatOptions('sample-format-input');
+        updateTsviewEventInputOptions('event-input-tsview');
+        updateTsviewGroupByOptions('tsview-grp-by');
+        updateTsviewFormatOptions('tsview-format-input');
 
         if(skipFilter == undefined){
             skipFilter = false;
@@ -1295,13 +1452,13 @@
             let treeToProcess = getActiveTree(eventType, isCalltree);
             let selectedLevel = getSelectedLevel(getActiveTree(eventType, false));
 
-            if (prevSampleProfile != "All" && prevCustomEvent === customEvent && currentLoadedTree === treeToProcess && prevOption === currentOption && isRefresh === false && isLevelRefresh === false && prevSelectedLevel === selectedLevel) {
+            if (prevTsviewSampleProfile != "All" && prevCustomEvent === customEvent && currentLoadedTree === treeToProcess && prevOption === currentOption && isRefresh === false && isLevelRefresh === false && prevSelectedLevel === selectedLevel) {
                 console.log("no change in sample table, option:" + (prevCustomEvent == customEvent) + ":" + (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
                 end = performance.now();
-                console.log("updateProfilerViewSample 1 time:" + (end - start));
+                console.log("updateProfilerViewTsview 1 time:" + (end - start));
                 return;
             }else{
-                console.log("change in sample table, option:" + prevSampleProfile +":"+ (prevCustomEvent == customEvent) + ":" + (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
+                console.log("change in sample table, option:" + prevTsviewSampleProfile +":"+ (prevCustomEvent == customEvent) + ":" + (currentLoadedTree === treeToProcess)+":"+ (prevOption === currentOption) +" isRefresh:"+(isRefresh === false)+":"+" isLevelRefresh:"+(isLevelRefresh === false)+" selectedLevel:"+ (prevSelectedLevel === selectedLevel));
             }
             currentLoadedTree = treeToProcess;
             prevOption = currentOption;
@@ -1309,32 +1466,32 @@
             prevSelectedLevel = selectedLevel;
             isLevelRefresh = false;
             isRefresh = false;
-            prevSampleProfile = $("#event-type-sample").val();
+            prevTsviewSampleProfile = $("#event-type-tsview").val();
 
             // if no data returned from our call don't try to parse it
             if (treeToProcess === undefined) {
                 end = performance.now();
-                console.log("updateProfilerViewSample 2 time:" + (end - start));
+                console.log("updateProfilerViewTsview 2 time:" + (end - start));
                 return;
             }
 
             resetTreeHeader("");
 
-            genSampleTable(true, level);
+            gentsviewtable(true, level);
 
             end = performance.now();
-            console.log("updateProfilerViewSample 3 time:" + (end - start));
+            console.log("updateProfilerViewTsview 3 time:" + (end - start));
         }else{
-            prevSampleProfile = $("#event-type-sample").val();
+            prevTsviewSampleProfile = $("#event-type-tsview").val();
 
             let start = performance.now();
 
             resetTreeHeader("");
 
-            genSampleTable(true, level);
+            gentsviewtable(true, level);
 
             let end = performance.now();
-            console.log("updateProfilerViewSample 4 time:" + (end - start));
+            console.log("updateProfilerViewTsview 4 time:" + (end - start));
 
             if(!isFilterOnType){
                 addTabNote(true,getContextHintNote(true,customEvent));
@@ -1353,4 +1510,32 @@
         return hash;
     }
 
+    function prepData(event){
+        let profile = getContextTree(1, event);
+        if(profile.prep != undefined && profile.prep == true){
+            end = performance.now();
+            console.log("prepData skip for:" + event);
+            return;//done only once
+        }
+
+        let start = performance.now();
+
+        let tidMap = profile.context.tidMap;
+
+        //generate unique timestamp array
+        for (var k in tidMap) {
+            for (let i = 0; i < tidMap[k].length; i++) {
+                if (timestampArray.indexOf(tidMap[k][i].time) === -1) {
+                    timestampArray.push(tidMap[k][i].time);
+                }
+            }
+        }
+        timestampArray.sort(function (a, b) {
+            return a - b
+        });
+
+        profile.prep = true;
+        end = performance.now();
+        console.log("prepData time :" + (end - start));
+    }
 </script>

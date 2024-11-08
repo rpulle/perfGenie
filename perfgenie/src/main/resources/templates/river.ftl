@@ -7,7 +7,7 @@
 */
 </script>
 
-<div style="padding-left: 25px;">
+<div  class='ui-widget' style="padding-left: 25px;">
     <label>Profile: </label>
     <select style="height:30px;text-align: center;" class="filterinput" name="event-type-river" id="event-type-river">
     </select>
@@ -79,11 +79,12 @@
     function riverPlot() {
         console.log("riverPlot");
         let baseJsonTree = getContextTree(1, getEventType());
-        if (baseJsonTree.meta.data == undefined) {
-            addTabNote(true,"Data not available to show this view")
+        if (baseJsonTree.meta == undefined || baseJsonTree.meta.data == undefined || baseJsonTree.meta.data.length < 3) {
+            addTabNote(true,"Data not available to show this view, check if isExperimental is enabled in config.properties")
             return;
         }
-        let selectedLevel = getSelectedLevel(getActiveTree(getEventType(), false));
+        //let selectedLevel = getSelectedLevel(getActiveTree(getEventType(), false));
+        let selectedLevel = getSelectedLevel(getTree(1, getEventType()));
         if(selectedLevel !== FilterLevel.UNDEFINED){
             addTabNote(true,"Filters not applied on this view.")
         }
@@ -176,10 +177,10 @@
             'y': newplotdata.cpuSamplesList,
             mode: 'lines',
             line: {
-                color: 'red',
+                color: 'blue',
                 width: 3
             },
-            name: "CPU%"
+            name: "Application CPU%"
         };
         tmpdata.push(trace);
         for (let i = 0; i < sortedPlotOrder.length; i++) {
