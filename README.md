@@ -67,7 +67,7 @@ isExperimental=false
 ```sh
 $ java -jar perfgenie/target/perfgenie.jar
 ```
-Access URL http://localhost:8080
+Access URL http://localhost:9090
 
 #### How to add JFR's for testing
 The application server has a cron job to monitor and parse JFR (*.jfr or .jfr.gz), and Jstack (.jstack) files available at /tmp/jfrs/ 
